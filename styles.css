@@ -735,7 +735,10 @@
 
 .ov-docx-link.is-internal {
   color: var(--link-color, #0b5cad);
-  text-decoration: underline dotted;
+  /* Longhands: the shorthand with a style is only partially supported on the
+     older Chromium some Obsidian versions run on. */
+  text-decoration-line: underline;
+  text-decoration-style: dotted;
 }
 
 .ov-docx-noteref {
@@ -796,18 +799,6 @@
 
 .ov-search-current {
   background: #ffb300;
-}
-
-.ov-keep-next {
-  break-after: avoid;
-}
-
-.ov-page-break-before {
-  break-before: page;
-}
-
-.ov-docx-section-break {
-  break-after: page;
 }
 
 /* ---------- presentation ---------- */
@@ -1070,15 +1061,17 @@
 
 /* Slideshow: the slide fills the pane, everything else steps out of the way.
    Only the viewer's chrome is hidden; the slide itself is untouched. */
-.ov-slideshow .ov-toolbar,
-.ov-slideshow .ov-tabs,
-.ov-slideshow .ov-outline,
-.ov-slideshow .ov-meta,
-.ov-slideshow .ov-filterbar,
-.ov-slideshow .ov-status,
-.ov-slideshow .ov-pptx-rail,
-.ov-slideshow .ov-pptx-notes {
-  display: none !important;
+/* The extra .ov-view class raises specificity past the base rules and past
+   .ov-view.ov-status-inline, so no override flag is needed. */
+.ov-view.ov-slideshow .ov-toolbar,
+.ov-view.ov-slideshow .ov-tabs,
+.ov-view.ov-slideshow .ov-outline,
+.ov-view.ov-slideshow .ov-meta,
+.ov-view.ov-slideshow .ov-filterbar,
+.ov-view.ov-slideshow .ov-status,
+.ov-view.ov-slideshow .ov-pptx-rail,
+.ov-view.ov-slideshow .ov-pptx-notes {
+  display: none;
 }
 
 .ov-slideshow .ov-body,
