@@ -1,6 +1,6 @@
 {
   "name": "office-viewer",
-  "version": "2.0.0",
+  "version": "2.0.1",
   "description": "View Excel, Word and PowerPoint files in Obsidian with their real styling: xlsx, xlsm, xltx, xltm, csv, tsv, ods, docx, docm, dotx, dotm, odt, rtf, doc, pptx, pptm, ppsx, ppsm, potx, potm and odp. Read only.",
   "main": "main.js",
   "scripts": {

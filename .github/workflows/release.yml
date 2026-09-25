@@ -48,10 +48,21 @@ jobs:
       - name: Smoke test the bundle
         run: bun test/smoke.mjs
 
-      - name: Record build provenance for the release assets
+      # One record per asset keeps every file independently verifiable.
+      - name: Record build provenance for main.js
         uses: actions/attest-build-provenance@v2
         with:
-          subject-path: "{main.js,manifest.json,styles.css,versions.json}"
+          subject-path: main.js
+
+      - name: Record build provenance for manifest.json
+        uses: actions/attest-build-provenance@v2
+        with:
+          subject-path: manifest.json
+
+      - name: Record build provenance for styles.css
+        uses: actions/attest-build-provenance@v2
+        with:
+          subject-path: styles.css
 
       - name: Upload release assets
         uses: softprops/action-gh-release@v2
@@ -60,5 +71,17 @@ jobs:
             main.js
             manifest.json
             styles.css
-            versions.json
+          body: |
+            Styled MS Office Viewer, read only Office and OpenDocument viewing
+            inside Obsidian.
+
+            Open .xlsx, .xlsm, .xltx, .xltm, .csv, .tsv, .ods, .docx, .docm,
+            .dotx, .dotm, .odt, .rtf, .doc, .pptx, .pptm, .ppsx, .ppsm, .potx,
+            .potm and .odp and read them with their real styling: a styled
+            grid, paginated documents, and slides with a thumbnail rail and a
+            slideshow mode.
+
+            Install: copy main.js, manifest.json and styles.css into
+            <Vault>/.obsidian/plugins/styled-ms-office-viewer/ and enable the
+            plugin in Settings, Community plugins.
           fail_on_unmatched_files: true

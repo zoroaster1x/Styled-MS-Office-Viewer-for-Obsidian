@@ -1,7 +1,7 @@
 {
   "id": "styled-ms-office-viewer",
   "name": "Styled MS Office Viewer",
-  "version": "2.0.0",
+  "version": "2.0.1",
   "minAppVersion": "1.5.0",
   "description": "View Excel (.xlsx, .xlsm, .xltx, .xltm, .csv, .tsv, .ods), Word (.docx, .docm, .dotx, .dotm, .odt, .rtf, .doc) and PowerPoint (.pptx, .pptm, .ppsx, .ppsm, .potx, .potm, .odp) files with their real styling. Read only.",
   "author": "Zoroaster1x",
