@@ -1,0 +1,33 @@
+{
+  "name": "office-viewer",
+  "version": "2.0.0",
+  "description": "View Excel, Word and PowerPoint files in Obsidian with their real styling: xlsx, xlsm, xltx, xltm, csv, tsv, ods, docx, docm, dotx, dotm, odt, rtf, doc, pptx, pptm, ppsx, ppsm, potx, potm and odp. Read only.",
+  "main": "main.js",
+  "scripts": {
+    "dev": "bun esbuild.config.mjs",
+    "build": "bun esbuild.config.mjs production",
+    "test": "bun test/smoke.mjs && bun test/filters.mjs && bun test/copy.mjs && bun test/privacy.mjs",
+    "test:files": "bun test/fidelity.mjs && bun test/stress.mjs --render && bun test/speed.mjs && bun test/vault.mjs",
+    "test:reference": "python3 test/compare-reference.py",
+    "inspect": "bun test/inspect.mjs"
+  },
+  "keywords": [
+    "obsidian",
+    "xlsx",
+    "docx",
+    "pptx",
+    "office",
+    "viewer"
+  ],
+  "license": "GPL-3.0-or-later",
+  "packageManager": "bun@1.4.0",
+  "devDependencies": {
+    "esbuild": "0.25.5",
+    "linkedom": "^0.18.5",
+    "obsidian": "file:test/stubs/obsidian"
+  },
+  "dependencies": {
+    "fflate": "^0.8.2",
+    "mtx-decompressor": "^1.6.0"
+  }
+}

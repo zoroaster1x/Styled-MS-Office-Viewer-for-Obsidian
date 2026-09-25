@@ -1,0 +1,40 @@
+name: Tests
+
+# Builds from the committed lockfile and runs every suite that needs no local
+# documents. The file backed suites skip themselves with a notice when
+# .testenv is absent, which is the case in CI.
+
+on:
+  push:
+    branches: ["**"]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Bun
+        uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: latest
+
+      - name: Install dependencies from the lockfile
+        run: bun install --frozen-lockfile
+
+      - name: Build the plugin
+        run: bun esbuild.config.mjs production
+
+      - name: Run the suites
+        run: |
+          set -e
+          for suite in smoke filters copy virtual sizing meta numfmt cf robust cache doc-legacy math privacy pptx-layout docx-layout tiff embed-font jxr; do
+            printf "%-14s " "$suite"
+            bun test/$suite.mjs 2>&1 | tail -1
+          done

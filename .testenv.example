@@ -1,0 +1,36 @@
+# Local test configuration for Office Viewer.
+#
+# The tests that read real documents take their paths from this file, so no
+# personal path or file name is ever committed. Copy it to .testenv and fill in
+# your own paths:
+#
+#   cp .testenv.example .testenv
+#
+# .testenv is gitignored and never leaves your machine. Anything you leave blank
+# is skipped with a notice; the synthetic tests (smoke, filters, copy) run
+# either way. A path that is set but does not exist stops the run, so a typo is
+# noticed instead of ignored.
+
+# A workbook (.xlsx) for the grid checks: filters, borders, copy.
+OV_TEST_XLSX=
+
+# A document (.docx) for the page renderer.
+OV_TEST_DOCX=
+
+# A presentation (.pptx) for the slide renderer.
+OV_TEST_PPTX=
+
+# A presentation or document that carries JPEG XR (.wdp) pictures, for the
+# WebAssembly decoder run. Skipped when unset.
+OV_TEST_JXR=
+
+# A folder to sweep with the stress and fidelity runs.
+OV_TEST_FOLDER=
+
+# Extra privacy patterns for test/privacy.mjs: a comma separated list of
+# regular expressions that must never appear in a tracked file. Put your own
+# folder names, course codes or document prefixes here, for example:
+#
+#   OV_PRIVACY_PATTERNS=my-course-code,vault-name,[A-Z]{3}_\d+
+#
+OV_PRIVACY_PATTERNS=

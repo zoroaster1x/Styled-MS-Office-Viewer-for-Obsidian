@@ -1,0 +1,22 @@
+Bundled JPEG XR decoder
+=======================
+
+src/media/jxr/jxr_dec.js and src/media/jxr/jxr_dec.wasm are the decoder from
+@jsquash/jxr (packaged here as @discourse/jxr 1.0.0), a WebAssembly build of
+the jxrlib JPEG XR codec.
+
+@jsquash/jxr
+  Copyright 2020 Google Inc.
+  Copyright Jamie Sinclair
+  Licensed under the Apache License, Version 2.0.
+  https://github.com/jamsinclair/jSquash
+  http://www.apache.org/licenses/LICENSE-2.0
+
+jxrlib (via the bvibber/jpegxr fork)
+  Copyright (c) 2009-2011, Microsoft Corporation
+  All rights reserved.
+  Licensed under the BSD 2-Clause License.
+  https://github.com/bvibber/jpegxr
+
+The files are used unmodified. The wrapper that loads and hides the Node global
+during instantiation is src/media/jxr.js in this repository.

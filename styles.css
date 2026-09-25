@@ -1,0 +1,1345 @@
+/* Office Viewer: shared chrome, spreadsheet grid, document page and slide
+   stage. Colours come from Obsidian's own variables so both themes work; the
+   document and slide surfaces stay white by default, like the real apps. */
+
+.ov-view {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  min-height: 0;
+  /* Tight at the bottom, so the page and the status line both sit lower. */
+  padding: 10px 12px 6px;
+  gap: 6px;
+}
+
+/* ---------- toolbar ---------- */
+
+.ov-toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  flex-wrap: wrap;
+  flex: 0 0 auto;
+}
+
+.ov-title {
+  font-size: 1.05em;
+  font-weight: 650;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.ov-tools {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  flex-wrap: wrap;
+}
+
+.ov-tool-btn {
+  background: transparent;
+  border: none;
+  box-shadow: none;
+  border-radius: 5px;
+  cursor: pointer;
+  padding: 4px;
+  color: var(--text-muted);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.ov-tool-btn:hover {
+  background: var(--background-modifier-hover);
+  color: var(--text-normal);
+}
+
+.ov-tool-btn.is-active {
+  background: var(--background-modifier-hover);
+  color: var(--text-normal);
+}
+
+.ov-search-input {
+  width: 150px;
+  height: 26px;
+  font-size: 12px;
+}
+
+/* The finder chevrons, left of the box, and only while a search has matches. */
+.ov-search-nav {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+}
+
+.ov-search-nav.is-hidden {
+  display: none;
+}
+
+.ov-search-count {
+  font-size: 0.8em;
+  color: var(--text-muted);
+  min-width: 64px;
+  margin-left: 4px;
+  text-align: left;
+}
+
+.ov-search-count:empty {
+  min-width: 0;
+  margin-left: 0;
+}
+
+.ov-zoom-label {
+  font-size: 0.8em;
+  color: var(--text-muted);
+  min-width: 38px;
+  text-align: center;
+}
+
+.ov-tabs {
+  display: flex;
+  gap: 2px;
+  flex: 0 0 auto;
+  border-bottom: 1px solid var(--background-modifier-border);
+  overflow-x: auto;
+}
+
+.ov-tab {
+  background: transparent;
+  border: 1px solid transparent;
+  border-bottom: none;
+  border-radius: 6px 6px 0 0;
+  box-shadow: none;
+  cursor: pointer;
+  color: var(--text-muted);
+  font-size: 0.85em;
+  padding: 4px 10px;
+  white-space: nowrap;
+}
+
+.ov-tab:hover {
+  background: var(--background-modifier-hover);
+  color: var(--text-normal);
+}
+
+.ov-tab.is-active {
+  background: var(--background-secondary);
+  color: var(--text-normal);
+  border-color: var(--background-modifier-border);
+  font-weight: 600;
+}
+
+.ov-host {
+  flex: 1 1 auto;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  border: 1px solid var(--background-modifier-border);
+  border-radius: 6px;
+  overflow: hidden;
+  background: var(--background-primary);
+}
+
+/* The counts live in the app's own status bar (see Plugin.statusBarEl), so the
+   view keeps that row for the document. This line is a fallback for a host
+   without one, and the tests still read its text. */
+.ov-status {
+  display: none;
+  flex: 0 0 auto;
+  font-size: 0.78em;
+  color: var(--text-muted);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  text-align: right;
+  padding: 1px 10px 2px;
+  margin-left: auto;
+}
+
+/* Opt in: the counts sit at the bottom left of the view itself, and the app's
+   status bar stays empty. Off by default, because the line costs the document
+   a row of height. */
+.ov-view.ov-status-inline .ov-status {
+  display: block;
+  text-align: left;
+  margin-left: 0;
+}
+
+/* ---------- filter chips ---------- */
+
+.ov-filterbar {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  flex: 0 0 auto;
+  max-height: 26%;
+  overflow-y: auto;
+  padding: 6px 0 2px;
+  border-top: 1px solid var(--background-modifier-border);
+}
+
+.ov-chip-group {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  flex-wrap: wrap;
+}
+
+.ov-chip-label {
+  font-size: 0.78em;
+  color: var(--text-muted);
+  white-space: nowrap;
+  margin-right: 2px;
+}
+
+.ov-chip {
+  background: var(--background-primary);
+  border: 1px solid var(--background-modifier-border);
+  border-radius: 999px;
+  box-shadow: none;
+  color: var(--text-normal);
+  cursor: pointer;
+  font-size: 0.76em;
+  padding: 1px 8px;
+  line-height: 1.5;
+}
+
+.ov-chip:hover {
+  border-color: var(--interactive-accent);
+}
+
+.ov-chip.is-off {
+  opacity: 0.4;
+  text-decoration: line-through;
+}
+
+.ov-chip-all {
+  color: var(--text-muted);
+}
+
+/* ---------- outline ---------- */
+
+.ov-outline {
+  flex: 0 0 auto;
+  max-height: 30%;
+  overflow-y: auto;
+  border-bottom: 1px solid var(--background-modifier-border);
+  padding: 4px 0 6px;
+}
+
+.ov-outline-item {
+  font-size: 0.85em;
+  color: var(--text-muted);
+  padding: 2px 4px;
+  cursor: pointer;
+  border-radius: 4px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.ov-outline-item:hover {
+  background: var(--background-modifier-hover);
+  color: var(--text-normal);
+}
+
+/* ---------- messages ---------- */
+
+.ov-message {
+  padding: 24px;
+  color: var(--text-muted);
+  max-width: 640px;
+}
+
+.ov-message h3 {
+  margin-top: 0;
+  color: var(--text-normal);
+}
+
+.ov-message-error h3 {
+  color: var(--text-error);
+}
+
+.ov-message-warning h3 {
+  color: var(--text-warning, var(--text-normal));
+}
+
+.ov-message-hint {
+  font-size: 0.9em;
+}
+
+.ov-message-actions {
+  display: flex;
+  gap: 8px;
+  margin-top: 12px;
+}
+
+.ov-button {
+  cursor: pointer;
+}
+
+.ov-loading {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 24px;
+  color: var(--text-muted);
+}
+
+.ov-loading::before {
+  content: "";
+  width: 14px;
+  height: 14px;
+  border: 2px solid var(--background-modifier-border);
+  border-top-color: var(--text-muted);
+  border-radius: 50%;
+  animation: ov-spin 900ms linear infinite;
+}
+
+@keyframes ov-spin {
+  to { transform: rotate(360deg); }
+}
+
+.ov-tabs.is-hidden,
+.ov-filterbar.is-hidden,
+.ov-outline.is-hidden {
+  display: none;
+}
+
+/* ---------- spreadsheet grid ---------- */
+
+.ov-sheet {
+  flex: 1 1 auto;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  --xlsx-sheet-bg: var(--background-primary);
+  --xlsx-sheet-text: var(--text-normal);
+  --xlsx-gridline: var(--background-modifier-border);
+  --xlsx-header-bg: var(--background-secondary);
+  --xlsx-header-text: var(--text-muted);
+}
+
+.ov-sheet.xlsx-white {
+  --xlsx-sheet-bg: #ffffff;
+  --xlsx-sheet-text: #000000;
+  --xlsx-gridline: #d4d4d4;
+  --xlsx-header-bg: #f3f3f3;
+  --xlsx-header-text: #555555;
+}
+
+.xlsx-sheet {
+  flex: 1 1 auto;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.xlsx-sheet.xlsx-white {
+  --xlsx-sheet-bg: #ffffff;
+  --xlsx-sheet-text: #000000;
+  --xlsx-gridline: #d4d4d4;
+  --xlsx-header-bg: #f3f3f3;
+  --xlsx-header-text: #555555;
+}
+
+.xlsx-sheet-scroll {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow: auto;
+  overscroll-behavior: contain;
+}
+
+.xlsx-sheet-grid {
+  display: grid;
+  background: var(--xlsx-sheet-bg);
+  color: var(--xlsx-sheet-text);
+  min-width: 100%;
+  width: max-content;
+}
+
+.xlsx-cell {
+  box-sizing: border-box;
+  overflow: hidden;
+  font-size: 12px;
+  line-height: 1.25;
+}
+
+.xlsx-cell-text {
+  position: relative;
+  z-index: 1;
+  vertical-align: top;
+}
+
+.xlsx-corner,
+.xlsx-col-head,
+.xlsx-row-head {
+  background: var(--xlsx-header-bg);
+  color: var(--xlsx-header-text);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 11px;
+  border-right: 1px solid var(--xlsx-gridline);
+  border-bottom: 1px solid var(--xlsx-gridline);
+  box-sizing: border-box;
+}
+
+.xlsx-corner {
+  border-left: 1px solid var(--xlsx-gridline);
+  border-top: 1px solid var(--xlsx-gridline);
+}
+
+.xlsx-filter-btn {
+  position: absolute;
+  right: 1px;
+  top: 50%;
+  transform: translateY(-50%);
+  width: 15px;
+  height: 15px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 8px;
+  line-height: 1;
+  background: var(--xlsx-header-bg);
+  border: 1px solid var(--xlsx-gridline);
+  border-radius: 3px;
+  cursor: pointer;
+  color: var(--xlsx-header-text);
+  z-index: 3;
+}
+
+.xlsx-filter-btn:hover {
+  color: var(--text-normal);
+}
+
+.xlsx-filtered .xlsx-filter-btn {
+  background: var(--interactive-accent);
+  color: var(--text-on-accent);
+  border-color: transparent;
+}
+
+.xlsx-filter-popup {
+  position: fixed;
+  z-index: 1000;
+  display: flex;
+  flex-direction: column;
+  background: var(--background-primary);
+  color: var(--text-normal);
+  border: 1px solid var(--background-modifier-border);
+  border-radius: 8px;
+  box-shadow: var(--shadow-s);
+  overflow: hidden;
+  font-size: 13px;
+}
+
+.xlsx-filter-popup-head {
+  padding: 7px 10px;
+  font-weight: 600;
+  border-bottom: 1px solid var(--background-modifier-border);
+}
+
+.xlsx-filter-search {
+  margin: 6px 10px 2px;
+}
+
+.xlsx-filter-list {
+  flex: 1 1 auto;
+  overflow-y: auto;
+  padding: 4px 10px 6px;
+}
+
+.xlsx-filter-item {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 2px 0;
+  cursor: pointer;
+  font-size: 12px;
+}
+
+.xlsx-filter-all {
+  padding: 4px 10px;
+  border-bottom: 1px solid var(--background-modifier-border);
+  font-weight: 600;
+}
+
+.xlsx-filter-popup-foot {
+  display: flex;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 6px 10px;
+  border-top: 1px solid var(--background-modifier-border);
+}
+
+.xlsx-filter-btn-plain {
+  box-shadow: none;
+  font-size: 12px;
+  padding: 3px 10px;
+}
+
+.xlsx-link {
+  cursor: pointer;
+}
+
+.xlsx-link-default .xlsx-cell-text {
+  color: var(--link-color);
+  text-decoration: underline;
+}
+
+.xlsx-link:not(.xlsx-link-default) .xlsx-cell-text {
+  text-decoration: underline;
+}
+
+.xlsx-selected {
+  box-shadow: inset 0 0 0 2px var(--interactive-accent);
+}
+
+/* A selected block: the whole range is tinted, the anchor keeps its ring. */
+.xlsx-in-range {
+  background-image: linear-gradient(rgba(127, 127, 127, 0.22), rgba(127, 127, 127, 0.22));
+  box-shadow: none;
+}
+
+/* The stationary band of frozen rows. One opaque layer sits behind the frozen
+   cells so nothing shows through it while the sheet scrolls underneath. */
+.xlsx-freeze-backdrop {
+  background: var(--xlsx-sheet-bg);
+  pointer-events: none;
+}
+
+.xlsx-search-hit {
+  box-shadow: inset 0 0 0 2px var(--color-yellow, #e0ac00);
+}
+
+.xlsx-search-current {
+  box-shadow: inset 0 0 0 2px var(--color-orange, #d97706);
+}
+
+.xlsx-databar {
+  position: absolute;
+  left: 0;
+  top: 1px;
+  bottom: 1px;
+  z-index: 0;
+  opacity: 0.75;
+  pointer-events: none;
+}
+
+/* Conditional icon sets: a glyph in the cell's left padding. */
+.xlsx-cf-icon {
+  position: absolute;
+  left: 2px;
+  top: 50%;
+  transform: translateY(-50%);
+  z-index: 1;
+  font-size: 0.95em;
+  line-height: 1;
+  pointer-events: none;
+}
+
+.xlsx-outline-btn {
+  background: var(--xlsx-header-bg);
+  border-right: 1px solid var(--xlsx-gridline);
+  border-bottom: 1px solid var(--xlsx-gridline);
+  color: var(--xlsx-header-text);
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 10px;
+  user-select: none;
+}
+
+@keyframes ov-flash {
+  0% { background-color: var(--text-highlight-bg, #ffff00); }
+  100% { background-color: transparent; }
+}
+
+.xlsx-flash {
+  animation: ov-flash 0.9s ease-out;
+}
+
+.xlsx-cap-note {
+  flex: 0 0 auto;
+  padding: 4px 8px;
+  font-size: 0.8em;
+  color: var(--text-muted);
+  border-top: 1px solid var(--background-modifier-border);
+}
+
+.xlsx-error {
+  padding: 20px 24px;
+  color: var(--text-muted);
+}
+
+.xlsx-error h3 {
+  color: var(--text-error);
+  margin-top: 0;
+}
+
+/* ---------- document ---------- */
+
+.ov-docx {
+  flex: 1 1 auto;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.ov-docx-scroll {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow: auto;
+  background: var(--background-secondary);
+  padding: 12px 0 14px;
+}
+
+.ov-docx-pages {
+  margin: 0 auto;
+  transform-origin: top center;
+  /* The document zoom. `zoom` is the property that scales the layout box, so
+     the scroll extent follows the pages; a transform would leave the scroll
+     area at the unscaled size and the zoom would look broken. */
+  zoom: var(--ov-docx-zoom, 1);
+}
+
+.ov-docx-page:last-child {
+  /* No gap after the last page: the scroll area's own padding is the gap. */
+  margin-bottom: 0;
+}
+
+.ov-docx-page {
+  background: #ffffff;
+  color: #000000;
+  box-sizing: border-box;
+  margin: 0 auto 18px;
+  box-shadow: 0 1px 5px rgba(0, 0, 0, 0.28);
+  display: flex;
+  flex-direction: column;
+  font-family: Calibri, Carlito, "Segoe UI", sans-serif;
+  font-size: 11pt;
+  line-height: 1.35;
+}
+
+.ov-theme-surface .ov-docx-page {
+  background: var(--background-primary);
+  color: var(--text-normal);
+  box-shadow: none;
+  border: 1px solid var(--background-modifier-border);
+}
+
+.ov-docx-pagecontent {
+  flex: 1 1 auto;
+}
+
+.ov-docx-pageheader,
+.ov-docx-pagefooter {
+  color: #555555;
+  font-size: 9pt;
+  flex: 0 0 auto;
+}
+
+.ov-theme-surface .ov-docx-pageheader,
+.ov-theme-surface .ov-docx-pagefooter {
+  color: var(--text-muted);
+}
+
+.ov-docx-pagefooter {
+  margin-top: auto;
+}
+
+.ov-docx-p {
+  /* No invented spacing: a document that states none shows none. Word's own
+     default template writes its spacing into the styles, and the renderer
+     applies what the file says. */
+  margin: 0;
+  white-space: pre-wrap;
+  overflow-wrap: break-word;
+}
+
+/* An empty paragraph is still a line at the paragraph mark's size. Without a
+   line box ten blank paragraphs collapse into one 8pt-margin gap and a form
+   loses its shape. */
+.ov-docx-p:empty::after {
+  content: "\200b";
+}
+
+.ov-docx-marker {
+  display: inline-block;
+  min-width: 1.1em;
+  margin-right: 0.35em;
+  white-space: pre;
+}
+
+.ov-docx-image {
+  display: inline-block;
+  max-width: 100%;
+  vertical-align: bottom;
+}
+
+.ov-docx-image img {
+  max-width: 100%;
+  height: auto;
+}
+
+.ov-docx-image-float {
+  float: left;
+  margin: 0 10px 6px 0;
+}
+
+.ov-docx-image.is-missing,
+.ov-docx-placeholder {
+  border: 1px dashed var(--background-modifier-border);
+  background: var(--background-secondary);
+  color: var(--text-muted);
+  font-size: 9pt;
+  padding: 10px;
+  text-align: center;
+  max-width: 100%;
+}
+
+.ov-docx-placeholder {
+  display: block;
+}
+
+.ov-docx-table {
+  border-collapse: collapse;
+  margin: 0 0 10pt;
+  max-width: 100%;
+  table-layout: fixed;
+}
+
+.ov-docx-table td {
+  border: 1px solid #999999;
+  padding: 3px 5px;
+  vertical-align: top;
+  overflow-wrap: break-word;
+}
+
+.ov-docx-table-header td {
+  font-weight: 600;
+}
+
+.ov-docx-link {
+  cursor: pointer;
+}
+
+.ov-docx-link.is-external {
+  color: var(--link-color, #0b5cad);
+  text-decoration: underline;
+}
+
+.ov-docx-link.is-internal {
+  color: var(--link-color, #0b5cad);
+  text-decoration: underline dotted;
+}
+
+.ov-docx-noteref {
+  color: var(--link-color, #0b5cad);
+  cursor: pointer;
+  font-size: 0.7em;
+  vertical-align: super;
+}
+
+.ov-docx-commentref {
+  color: var(--text-muted);
+  font-size: 0.7em;
+}
+
+.ov-docx-field {
+  color: inherit;
+}
+
+.ov-docx-r.is-deleted {
+  text-decoration: line-through;
+  opacity: 0.6;
+}
+
+.ov-docx-tab {
+  white-space: pre;
+  tab-size: 4;
+}
+
+.ov-docx-notes {
+  max-width: 100%;
+  margin: 18px auto 0;
+  padding: 10px 14px;
+  border-top: 1px solid #cccccc;
+  font-size: 9pt;
+  color: #333333;
+  user-select: text;
+  -webkit-user-select: text;
+  cursor: text;
+}
+
+.ov-theme-surface .ov-docx-notes {
+  border-top-color: var(--background-modifier-border);
+  color: var(--text-muted);
+}
+
+.ov-docx-notes-title {
+  font-weight: 600;
+  margin-bottom: 4px;
+}
+
+.ov-docx-note {
+  padding: 2px 0;
+}
+
+.ov-search-hit {
+  background: #ffe58f;
+}
+
+.ov-search-current {
+  background: #ffb300;
+}
+
+.ov-keep-next {
+  break-after: avoid;
+}
+
+.ov-page-break-before {
+  break-before: page;
+}
+
+.ov-docx-section-break {
+  break-after: page;
+}
+
+/* ---------- presentation ---------- */
+
+.ov-pptx {
+  flex: 1 1 auto;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  background: var(--background-secondary);
+}
+
+.ov-pptx-body {
+  flex: 1 1 auto;
+  min-height: 0;
+  display: flex;
+}
+
+.ov-pptx-rail {
+  flex: 0 0 122px;
+  overflow-y: auto;
+  border-right: 1px solid var(--background-modifier-border);
+  background: var(--background-primary);
+  padding: 6px;
+  /* The thumbnails are pictures of slides, not text to drag over. */
+  user-select: none;
+}
+
+.ov-pptx-thumb {
+  display: flex;
+  align-items: flex-start;
+  gap: 4px;
+  padding: 3px;
+  border-radius: 5px;
+  cursor: pointer;
+  margin-bottom: 4px;
+}
+
+.ov-pptx-thumb:hover {
+  background: var(--background-modifier-hover);
+}
+
+.ov-pptx-thumb.is-current {
+  background: var(--background-modifier-hover);
+  outline: 2px solid var(--interactive-accent);
+}
+
+.ov-pptx-thumbnum {
+  font-size: 10px;
+  color: var(--text-muted);
+  min-width: 14px;
+  text-align: right;
+}
+
+.ov-pptx-thumbbox {
+  flex: 1 1 auto;
+  background: #ffffff;
+  overflow: hidden;
+  border: 1px solid #cccccc;
+  position: relative;
+}
+
+/* The thumbnail scales itself to its frame, so no fixed transform here. */
+.ov-pptx-thumbbox .ov-pptx-page {
+  transform-origin: top left;
+}
+
+.ov-pptx-stagewrap {
+  flex: 1 1 auto;
+  min-width: 0;
+  min-height: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  overflow: auto;
+}
+
+.ov-pptx-stage {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 100%;
+  height: 100%;
+}
+
+.ov-pptx-frame {
+  position: relative;
+}
+
+.ov-pptx-slide {
+  transform-origin: top left;
+}
+
+.ov-pptx-page {
+  background: #ffffff;
+  color: #000000;
+  position: relative;
+  overflow: hidden;
+  font-family: Calibri, Carlito, "Segoe UI", sans-serif;
+}
+
+.ov-pptx-shape {
+  position: absolute;
+  box-sizing: border-box;
+}
+
+.ov-pptx-group {
+  position: absolute;
+}
+
+.ov-pptx-text {
+  position: absolute;
+  inset: 0;
+  box-sizing: border-box;
+  /* Words that do not fit spill instead of being cut in half. Office wraps at
+     word boundaries only, so a long word overflows rather than breaking. */
+  overflow: visible;
+  word-break: normal;
+  overflow-wrap: normal;
+}
+
+.ov-pptx-p {
+  margin: 0 0 2px;
+  white-space: pre-wrap;
+}
+
+/* bodyPr wrap="none": the text never wraps, it spills past the shape. */
+.ov-pptx-nowrap .ov-pptx-p {
+  white-space: pre;
+}
+
+.ov-pptx-bullet {
+  margin-right: 0.4em;
+}
+
+.ov-pptx-table {
+  border-collapse: collapse;
+}
+
+.ov-pptx-table td {
+  overflow: hidden;
+  vertical-align: top;
+}
+
+.ov-pptx-tableblock {
+  background: rgba(127, 127, 127, 0.12);
+}
+
+.ov-pptx-placeholder {
+  width: 100%;
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
+  border: 1px dashed var(--background-modifier-border);
+  color: var(--text-muted);
+  font-size: 11px;
+  text-align: center;
+  padding: 6px;
+}
+
+.ov-pptx-missing {
+  background: rgba(127, 127, 127, 0.1);
+  border: 1px dashed var(--background-modifier-border);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.ov-pptx-missingtext {
+  font-size: 11px;
+  color: var(--text-muted);
+  text-align: center;
+  padding: 4px;
+}
+
+.ov-pptx-notes {
+  flex: 0 0 auto;
+  max-height: 26%;
+  overflow-y: auto;
+  border-top: 1px solid var(--background-modifier-border);
+  background: var(--background-primary);
+  padding: 6px 12px 10px;
+}
+
+.ov-pptx-noteshead {
+  font-size: 0.8em;
+  font-weight: 600;
+  color: var(--text-muted);
+  margin-bottom: 2px;
+}
+
+.ov-pptx-notesbody {
+  font-size: 0.86em;
+  color: var(--text-normal);
+  white-space: pre-wrap;
+  /* The app shell turns selection off; the notes are text to copy. */
+  user-select: text;
+  -webkit-user-select: text;
+  cursor: text;
+}
+
+.ov-pptx-notes.is-hidden {
+  display: none;
+}
+
+.ov-pptx-empty {
+  padding: 24px;
+  color: var(--text-muted);
+}
+
+/* Keep the viewer usable on a narrow pane. */
+@media (max-width: 700px) {
+  .ov-pptx-rail {
+    flex-basis: 84px;
+  }
+
+  .ov-search-input {
+    width: 90px;
+  }
+}
+
+/* ---------- markers emitted by the renderers ---------- */
+
+/* The spreadsheet grid renderer tags wrapper states; they need no rules of
+   their own beyond what the grid already sets, but keeping them explicit makes
+   the class contract visible in one place. */
+.xlsx-merged,
+.xlsx-wrap {
+  box-sizing: border-box;
+}
+
+.xlsx-filter-close {
+  font-weight: 600;
+}
+
+.ov-docx-note-p {
+  margin: 0 0 2px;
+  white-space: pre-wrap;
+}
+
+.ov-pptx-r {
+  white-space: pre-wrap;
+}
+
+.ov-pptx-placeholder-sub {
+  font-size: 10px;
+  opacity: 0.85;
+}
+
+.ov-pptx-vertical {
+  writing-mode: vertical-rl;
+}
+
+.ov-pptx-autosize {
+  height: auto;
+}
+
+/* Slideshow: the slide fills the pane, everything else steps out of the way.
+   Only the viewer's chrome is hidden; the slide itself is untouched. */
+.ov-slideshow .ov-toolbar,
+.ov-slideshow .ov-tabs,
+.ov-slideshow .ov-outline,
+.ov-slideshow .ov-meta,
+.ov-slideshow .ov-filterbar,
+.ov-slideshow .ov-status,
+.ov-slideshow .ov-pptx-rail,
+.ov-slideshow .ov-pptx-notes {
+  display: none !important;
+}
+
+.ov-slideshow .ov-body,
+.ov-slideshow .ov-host,
+.ov-slideshow .ov-pptx,
+.ov-slideshow .ov-pptx-body,
+.ov-slideshow .ov-pptx-stagewrap,
+.ov-slideshow .ov-pptx-stage {
+  position: absolute;
+  inset: 0;
+  padding: 0;
+  margin: 0;
+}
+
+.ov-slideshow {
+  background: #0b0b0b;
+}
+
+/* A short entrance on each slide change. This is the viewer's own touch, not
+   the file's transition, which is reported in the details panel instead. */
+.ov-slideshow .ov-pptx-frame {
+  animation: ov-slideshow-in 160ms ease-out;
+}
+
+@keyframes ov-slideshow-in {
+  from { opacity: 0.4; transform: translateY(6px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+/* Slide background image: behind every shape, never interactive. */
+.ov-pptx-bgimage {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  z-index: 0;
+  pointer-events: none;
+}
+
+.ov-pptx-page > .ov-pptx-shape,
+.ov-pptx-page > .ov-pptx-group {
+  z-index: 1;
+}
+
+/* Spreadsheet focus ring: the grid takes focus for keyboard navigation. */
+.ov-host .xlsx-sheet-scroll:focus,
+.ov-host .xlsx-sheet-scroll:focus-visible {
+  outline: none;
+}
+
+/* Full cell contents, shown on double click when the value is clipped. */
+.xlsx-cell-popup {
+  position: fixed;
+  z-index: 1001;
+  display: flex;
+  flex-direction: column;
+  background: var(--background-primary);
+  color: var(--text-normal);
+  border: 1px solid var(--background-modifier-border);
+  border-radius: 8px;
+  box-shadow: var(--shadow-s);
+  overflow: hidden;
+  font-size: 13px;
+}
+
+.xlsx-cell-popup-head {
+  padding: 6px 10px;
+  font-weight: 600;
+  border-bottom: 1px solid var(--background-modifier-border);
+  font-family: var(--font-monospace);
+  font-size: 0.85em;
+}
+
+.xlsx-cell-popup-body {
+  padding: 8px 10px;
+  max-height: 40vh;
+  overflow-y: auto;
+  white-space: pre-wrap;
+  word-break: break-word;
+  user-select: text;
+}
+
+.xlsx-cell-popup-foot {
+  display: flex;
+  justify-content: flex-end;
+  gap: 6px;
+  padding: 6px 10px;
+  border-top: 1px solid var(--background-modifier-border);
+}
+
+/* A text box from a Word shape, drawn where the shape is anchored. */
+.ov-docx-textbox {
+  border: 1px solid #bbbbbb;
+  background: rgba(127, 127, 127, 0.06);
+  padding: 4px 6px;
+  margin: 2px 0;
+  display: inline-block;
+}
+
+/* The page number a viewer prints in the bottom margin when the document has
+   no footer of its own. */
+.ov-docx-pagenumber {
+  text-align: center;
+  color: var(--text-faint, #999999);
+  font-size: 9pt;
+  padding-top: 4px;
+}
+
+/* A page keeps a visible gap from the next one, like sheets of paper. */
+.ov-docx-page + .ov-docx-page {
+  margin-top: 22px;
+}
+
+/* Drag handles for column and row sizing. They sit on the header edges and
+   stay invisible until the pointer is over them. */
+.xlsx-col-resize {
+  position: absolute;
+  top: 0;
+  right: -3px;
+  width: 7px;
+  height: 100%;
+  cursor: col-resize;
+  z-index: 2;
+}
+
+.xlsx-col-resize:hover {
+  background: var(--interactive-accent);
+  opacity: 0.5;
+}
+
+.xlsx-row-resize {
+  position: absolute;
+  left: 0;
+  bottom: -3px;
+  height: 7px;
+  width: 100%;
+  cursor: row-resize;
+  z-index: 2;
+}
+
+.xlsx-row-resize:hover {
+  background: var(--interactive-accent);
+  opacity: 0.5;
+}
+
+/* Document and slide text is there to be read, selected and copied. */
+.ov-docx-page,
+.ov-pptx-page {
+  user-select: text;
+  -webkit-user-select: text;
+  cursor: text;
+}
+
+/* The chrome around the page is not text. */
+.ov-docx-pageheader,
+.ov-docx-pagefooter,
+.ov-docx-pagenumber {
+  user-select: none;
+}
+
+/* Selected words inside a document or slide get a readable highlight. */
+.ov-docx-page ::selection,
+.ov-pptx-page ::selection {
+  background: var(--text-selection, rgba(127, 160, 220, 0.45));
+}
+
+/* ---------- file details panel ---------- */
+
+.ov-body {
+  flex: 1 1 auto;
+  min-height: 0;
+  display: flex;
+}
+
+.ov-body .ov-host {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.ov-meta {
+  flex: 0 0 290px;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  border-left: 1px solid var(--background-modifier-border);
+  background: var(--background-secondary);
+  overflow-y: auto;
+}
+
+.ov-meta.is-hidden {
+  display: none;
+}
+
+.ov-meta-head {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 8px 10px 6px;
+  font-weight: 650;
+  border-bottom: 1px solid var(--background-modifier-border);
+  position: sticky;
+  top: 0;
+  background: var(--background-secondary);
+}
+
+.ov-meta-section {
+  /* Aligned with the rows below it, not flush to the panel edge. */
+  margin: 12px 12px 2px;
+  font-size: var(--font-ui-smaller);
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--text-muted);
+}
+
+/* The action buttons stay in one tight group at the right edge. */
+.ov-meta-actions {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  margin-left: auto;
+}
+
+.ov-meta-title {
+  margin-right: auto;
+}
+
+.ov-meta-list {
+  padding: 4px 12px 14px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.ov-meta-row {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+}
+
+.ov-meta-label {
+  font-size: 0.72em;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--text-faint, var(--text-muted));
+}
+
+.ov-meta-value {
+  font-size: 0.86em;
+  color: var(--text-normal);
+  word-break: break-word;
+  white-space: pre-wrap;
+}
+
+.ov-meta-empty {
+  font-size: 0.85em;
+  color: var(--text-muted);
+}
+
+@media (max-width: 700px) {
+  .ov-meta {
+    flex-basis: 200px;
+  }
+}

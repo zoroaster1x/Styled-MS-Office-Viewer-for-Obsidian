@@ -1,0 +1,64 @@
+name: Release Obsidian plugin
+
+# Publishes the plugin when a version tag is pushed. The tag must equal the
+# version in manifest.json, which is what the community plugin directory
+# checks. The build runs from the committed lockfile, and each release asset is
+# recorded with GitHub build provenance so a download can be traced back to
+# this repository and workflow.
+
+on:
+  push:
+    tags:
+      - "*"
+
+permissions:
+  contents: write
+  id-token: write
+  attestations: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Bun
+        uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: latest
+
+      - name: Verify the tag matches the manifest version
+        if: startsWith(github.ref, 'refs/tags/')
+        run: |
+          TAG="${GITHUB_REF#refs/tags/}"
+          MANIFEST_VERSION="$(bun -e 'console.log(require("./manifest.json").version)')"
+          if [ "$TAG" != "$MANIFEST_VERSION" ]; then
+            echo "tag $TAG does not match manifest version $MANIFEST_VERSION"
+            exit 1
+          fi
+
+      - name: Install dependencies from the lockfile
+        run: bun install --frozen-lockfile
+
+      - name: Build the plugin
+        run: bun esbuild.config.mjs production
+
+      - name: Smoke test the bundle
+        run: bun test/smoke.mjs
+
+      - name: Record build provenance for the release assets
+        uses: actions/attest-build-provenance@v2
+        with:
+          subject-path: "{main.js,manifest.json,styles.css,versions.json}"
+
+      - name: Upload release assets
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            main.js
+            manifest.json
+            styles.css
+            versions.json
+          fail_on_unmatched_files: true
