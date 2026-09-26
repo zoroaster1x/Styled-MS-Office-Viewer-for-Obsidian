@@ -474,12 +474,24 @@ function createDocxRenderer(opts) {
       listCounters: new Map(),
       tabStops: paragraphTabStops(props),
       cursor: 0,
+      plannedTop: block.plannedTop || 0,
+      blockLeft: parseFloat(el.style.paddingLeft) || 0,
     };
     // A paragraph that tabs past its own width is a layout line (a cover logo,
     // a signature rule). Word lets it overflow the margin; the browser would
     // wrap it at the last tab, so the line is kept whole.
     if (ctx.tabStops.some((stop) => stop.pos > contentWidthPx)) el.style.whiteSpace = "nowrap";
     renderInline(block.runs, el, props, ctx);
+    // A paragraph whose only content is an overlay still occupies its own line
+    // in Word, which is what spaces a column of anchored boxes down the page.
+    let hasFlow = false;
+    for (const child of el.children) {
+      if (!child.classList || !child.classList.contains("ov-docx-anchor")) {
+        hasFlow = true;
+        break;
+      }
+    }
+    if (!hasFlow) el.addClass("ov-anchor-only");
     mapBlock(block, el);
   }
 
@@ -564,8 +576,10 @@ function createDocxRenderer(opts) {
     // Field characters arrive in separate w:r elements, so their state has to
     // outlive one pass of this loop.
     const state = fieldState || { stack: [] };
-    if (!ctx) ctx = { listCounters: new Map(), tabStops: [], cursor: 0 };
+    if (!ctx) ctx = { listCounters: new Map(), tabStops: [], cursor: 0, plannedTop: 0, blockLeft: 0 };
     if (!ctx.tabStops) ctx.tabStops = [];
+    if (typeof ctx.plannedTop !== "number") ctx.plannedTop = 0;
+    if (typeof ctx.blockLeft !== "number") ctx.blockLeft = 0;
     if (typeof ctx.cursor !== "number") ctx.cursor = 0;
     for (let i = 0; i < runs.length; i++) {
       const run = runs[i];
@@ -592,7 +606,7 @@ function createDocxRenderer(opts) {
         renderShapeGroup(parent, run);
         ctx.cursor += flowWidth(run);
       } else if (run.type === "vml") {
-        renderVmlShape(parent, run);
+        renderVmlShape(parent, run, ctx);
         ctx.cursor += flowWidth(run);
       } else if (run.type === "math") {
         renderMath(run.node, parent, paraProps);
@@ -852,12 +866,14 @@ function createDocxRenderer(opts) {
 
   // A legacy VML drawing (w:pict). Coordinates and style are read by the vml
   // module; paragraphs keep the document style cascade.
-  function renderVmlShape(parent, run) {
+  function renderVmlShape(parent, run, ctx) {
     renderVml(parent, run, {
       theme: model.theme,
       contentWidthPx,
       pageMarginLeftPx: twipToPx(marginLeftTw),
       pageMarginTopPx: twipToPx(marginTopTw),
+      plannedTop: (ctx && ctx.plannedTop) || 0,
+      plannedLeft: (ctx && ctx.blockLeft) || 0,
       mediaUrl: (rid) => model.mediaUrl(rid),
       parseParagraph: (el) => require("./parse").parseParagraph(el, model, { listCounters: new Map() }),
       drawParagraph: (block, host) => renderParagraph(block, host),
@@ -882,7 +898,11 @@ function createDocxRenderer(opts) {
   function hasAnchoredRun(runs) {
     for (const run of runs || []) {
       if (!run) continue;
-      if (run.anchor && run.anchor.outOfFlow) return true;
+      // A page-context anchor is positioned against the page content, so it
+      // must not make the paragraph a containing block. A text-relative VML
+      // box is positioned against its paragraph and does.
+      if (run.anchor && run.anchor.outOfFlow && run.anchor.context !== "page") return true;
+      if (run.type === "vml" && run.anchor && run.anchor.context !== "page") return true;
       if (run.type === "run" && hasAnchoredRun(run.runs)) return true;
       if (run.type === "link" && hasAnchoredRun(run.link.runs)) return true;
     }
@@ -890,6 +910,10 @@ function createDocxRenderer(opts) {
   }
 
   function flowWidth(run) {
+    if (run.type === "vml") {
+      if (run.anchor && run.anchor.context === "page") return 0;
+      return Number(run.widthPx) > 0 ? Number(run.widthPx) : 0;
+    }
     if (run.anchor && run.anchor.outOfFlow) return 0;
     return Number(run.widthPx) > 0 ? Number(run.widthPx) : 0;
   }
@@ -1346,6 +1370,9 @@ function createDocxRenderer(opts) {
       for (const inner of blocks || []) {
         if (!inner) continue;
         if (inner.type === "image" || inner.type === "textbox" || inner.type === "shapegroup" || inner.type === "vml") {
+          // A DrawingML overlay takes no room in the page plan; an in-flow VML
+          // box does, and its height is what spaces the page.
+          if (inner.anchor && inner.anchor.outOfFlow) continue;
           const top = (inner.offsetPx && inner.offsetPx.top) || 0;
           const imageHeight = Number(inner.heightPx) > 0 ? Number(inner.heightPx) + top : 0;
           const imageLines = Number(inner.heightPx) > 0 ? Math.ceil(imageHeight / Math.max(1, linePx)) : 0;
@@ -1450,6 +1477,9 @@ function createDocxRenderer(opts) {
           nextPage();
         }
       }
+      // The block's offset in the page content box, which VML overlays and
+      // other anchored content need to place themselves without measuring.
+      block.plannedTop = used + metrics.before;
       current.push(block);
       used += total;
       if (block.pageBreakAfter) nextPage();
