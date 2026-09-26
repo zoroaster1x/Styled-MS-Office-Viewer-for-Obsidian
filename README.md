@@ -136,8 +136,8 @@ Every number below comes from the harness in `test/`, over a library of universi
 
 | Check | Result |
 |---|---|
-| Text fidelity over 396 documents | 396 pass, 0 fail, 43.1 s |
-| Parse and render over 397 documents (228 Word, 163 decks, 1 workbook, 5 Word 97) | 0 failures, 33.5 s with full rendering |
+| Text fidelity over 396 documents | 396 pass, 0 fail, 41.4 s |
+| Parse and render over 397 documents (228 Word, 163 decks, 1 workbook, 5 Word 97) | 0 failures, 33.1 s with full rendering |
 | 11.1 MB, 36 page manual, open in Obsidian's windowed mode | parse about 130 ms, first paint about 50 ms (was about 300 ms and 800 ms) |
 | 8.8 MB, 48 page handbook, open in Obsidian's windowed mode | parse about 120 ms, first paint about 50 ms (was about 600 ms and 130 ms) |
 | 9.8 MB deck, first slide plus rail | about 320 ms (was about 640 ms) |
