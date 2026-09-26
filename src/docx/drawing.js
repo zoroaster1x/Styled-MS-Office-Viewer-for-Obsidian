@@ -51,6 +51,9 @@ function renderShapeGroup(parent, run, opts) {
   wrapper.style.width = extent.width + "px";
   wrapper.style.height = extent.height + "px";
   if (run.alt || run.name) wrapper.title = run.alt || run.name;
+  if (run.anchor && run.anchor.outOfFlow) {
+    applyAnchorStyles(wrapper, run.anchor, opts.contentWidthPx || 0, extent.width);
+  }
 
   if (tagName(node) === "wgp") {
     // The group's own child space maps onto the wrapper box; nested groups
@@ -657,8 +660,34 @@ function svgEl(doc, name) {
   return doc.createElementNS ? doc.createElementNS(SVG_NS, name) : doc.createElement(name);
 }
 
+// Places an out-of-flow drawing from its wp:anchor offsets. wrapNone objects
+// take no room in the line, which is what puts a cover logo at its right tab
+// stop and a nose-bridge trapezoid under the ruler instead of at the start of
+// the paragraph.
+function applyAnchorStyles(el, anchor, contentWidth, widthPx) {
+  if (!anchor || !anchor.outOfFlow) return false;
+  const h = anchor.h || {};
+  const v = anchor.v || {};
+  let left = 0;
+  if (h.offset != null) {
+    left = emuToPx(h.offset);
+  } else if (h.align === "center") {
+    left = Math.max(0, (contentWidth - widthPx) / 2);
+  } else if (h.align === "right" || h.align === "end") {
+    left = Math.max(0, contentWidth - widthPx);
+  }
+  const top = v.offset != null ? emuToPx(v.offset) : 0;
+  el.style.position = "absolute";
+  el.style.left = left + "px";
+  el.style.top = top + "px";
+  el.style.margin = "0";
+  el.style.zIndex = anchor.behindDoc ? "-1" : "1";
+  if (el.addClass) el.addClass("ov-docx-anchor");
+  return true;
+}
+
 function round1(value) {
   return Math.round(value * 100) / 100;
 }
 
-module.exports = { renderShapeGroup };
+module.exports = { renderShapeGroup, applyAnchorStyles };

@@ -28,7 +28,7 @@ const { twipToPx, halfPtToPx, emuToPx } = require("../shared/units");
 const { tagName } = require("../shared/xml");
 const { mathText } = require("./math");
 const { renderMathDom } = require("../shared/math-dom");
-const { renderShapeGroup: drawShapeGroup } = require("./drawing");
+const { renderShapeGroup: drawShapeGroup, applyAnchorStyles } = require("./drawing");
 
 const DEFAULT_FONT_PT = 11;
 const DEFAULT_PAGE_WIDTH_TW = 11906;
@@ -304,6 +304,7 @@ function createDocxRenderer(opts) {
     const el = parent.createDiv("ov-docx-p");
     applyParagraphStyle(el, props, block);
     if (block.sectionBreak) el.addClass("ov-docx-section-break");
+    if (hasAnchoredRun(block.runs)) el.addClass("ov-has-anchor");
 
     if (block.numbering) {
       applyListLayout(el, props, block.numbering);
@@ -314,13 +315,42 @@ function createDocxRenderer(opts) {
       applyRunStyle(marker, markerProps);
     }
 
-    const ctx = { listCounters: new Map() };
+    const ctx = {
+      listCounters: new Map(),
+      tabStops: paragraphTabStops(props),
+      cursor: 0,
+    };
+    // A paragraph that tabs past its own width is a layout line (a cover logo,
+    // a signature rule). Word lets it overflow the margin; the browser would
+    // wrap it at the last tab, so the line is kept whole.
+    if (ctx.tabStops.some((stop) => stop.pos > contentWidthPx)) el.style.whiteSpace = "nowrap";
     renderInline(block.runs, el, props, ctx);
     if (isHeading(props) && block.runs.length) {
       const text = plainText(block.runs);
       if (text) headingAnchors.set("heading-" + headingAnchors.size, el);
     }
     registerText(el);
+  }
+
+  // Word lays tabs out on explicit stops, or on the default half-inch grid. A
+  // right tab puts the end of the following content at the stop, which is how
+  // a cover logo lands at the right of the page. The positions are measured
+  // from the text margin, so a left indent shifts them in our box.
+  function paragraphTabStops(props) {
+    const indentPx = props.indentLeftTw != null ? twipToPx(props.indentLeftTw) : 0;
+    const stops = [];
+    for (const tab of props.tabs || []) {
+      stops.push({ pos: twipToPx(tab.posTw) - indentPx, align: tab.align || "left", leader: tab.leader || "none" });
+    }
+    stops.sort((a, b) => a.pos - b.pos);
+    return stops;
+  }
+
+  function tabStopAfter(ctx, cursor) {
+    for (const stop of ctx.tabStops) {
+      if (stop.pos > cursor + 0.5) return stop;
+    }
+    return { pos: (Math.floor(cursor / 48) + 1) * 48, align: "left", leader: "none" };
   }
 
   function applyParagraphStyle(el, props, block) {
@@ -383,28 +413,33 @@ function createDocxRenderer(opts) {
     // Field characters arrive in separate w:r elements, so their state has to
     // outlive one pass of this loop.
     const state = fieldState || { stack: [] };
-    for (const run of runs) {
+    if (!ctx) ctx = { listCounters: new Map(), tabStops: [], cursor: 0 };
+    if (!ctx.tabStops) ctx.tabStops = [];
+    if (typeof ctx.cursor !== "number") ctx.cursor = 0;
+    for (let i = 0; i < runs.length; i++) {
+      const run = runs[i];
       if (!run) continue;
       if (run.type === "text") {
         if (suppressFieldResult(state, parent)) continue;
-        appendTextRun(parent, run, paraProps);
+        ctx.cursor += appendTextRun(parent, run, paraProps);
       } else if (run.type === "run") {
         renderInline(run.runs, parent, paraProps, ctx, state);
       } else if (run.type === "link") {
         renderLink(parent, run.link, paraProps, ctx, state);
       } else if (run.type === "break") {
         appendBreak(parent);
+        ctx.cursor = 0;
       } else if (run.type === "tab") {
-        const tab = parent.createSpan("ov-docx-tab");
-        tab.setText("\t");
-        const tabProps = resolveRunProps(null, run.props, paraProps);
-        applyRunStyle(tab, tabProps);
+        i = renderTabGroup(parent, paraProps, ctx, runs, i, state);
       } else if (run.type === "textbox") {
         renderTextBox(parent, run, paraProps);
+        ctx.cursor += flowWidth(run);
       } else if (run.type === "image") {
         renderImage(parent, run);
+        ctx.cursor += flowWidth(run);
       } else if (run.type === "shapegroup") {
         renderShapeGroup(parent, run);
+        ctx.cursor += flowWidth(run);
       } else if (run.type === "math") {
         renderMath(run.node, parent, paraProps);
       } else if (run.type === "placeholder") {
@@ -520,11 +555,64 @@ function createDocxRenderer(opts) {
 
   function appendTextRun(parent, run, paraProps) {
     const props = resolveRunProps(null, run.props, paraProps);
-    if (!run.text) return;
+    if (!run.text) return 0;
     const span = parent.createSpan("ov-docx-r");
     if (run.deleted) span.addClass("is-deleted");
     span.setText(run.text);
     applyRunStyle(span, props);
+    return measureWidth(run.text, runFontString(props));
+  }
+
+  function runFontString(props) {
+    const sizePt = props && props.sizeHalfPt != null ? props.sizeHalfPt / 2 : DEFAULT_FONT_PT;
+    let family = props && props.fontFamily;
+    if (!family && props && props.fontFamilyTheme && model.theme && model.theme.fonts) {
+      family = model.theme.fonts.minor;
+    }
+    return ptToPxLocal(sizePt) + "px " + (family || "Calibri") + ", Calibri, sans-serif";
+  }
+
+  function renderTabGroup(parent, paraProps, ctx, runs, index, fieldState) {
+    const stop = tabStopAfter(ctx, ctx.cursor);
+    let end = index + 1;
+    while (end < runs.length && runs[end] && runs[end].type !== "break" && !containsTab(runs[end])) end++;
+    const following = runs.slice(index + 1, end);
+
+    if (stop.align === "left" || following.length === 0) {
+      // A left stop is a plain advance; the content after it flows on.
+      const width = Math.max(0, stop.pos - ctx.cursor);
+      const span = parent.createSpan("ov-docx-tabstop");
+      span.style.width = width + "px";
+      applyLeader(span, stop);
+      ctx.cursor = stop.pos;
+      return index;
+    }
+
+    // A right or centre stop aligns the content that follows it. An atomic box
+    // of the stop's width, with the content aligned inside, keeps the layout
+    // exact and the line unbreakable; a span plus a separate content element
+    // cannot know the content width before it is laid out.
+    const width = Math.max(0, stop.pos - ctx.cursor);
+    const box = parent.createSpan("ov-docx-tabbox");
+    box.style.width = width + "px";
+    box.style.textAlign = stop.align;
+    renderInline(following, box, paraProps, { listCounters: ctx.listCounters, tabStops: [], cursor: 0 }, fieldState);
+    ctx.cursor = stop.pos;
+    return end - 1;
+  }
+
+  // A tab inside a run wrapper is still a tab for the grouping walk.
+  function containsTab(run) {
+    if (!run) return false;
+    if (run.type === "tab") return true;
+    if (run.type === "run") return (run.runs || []).some(containsTab);
+    return false;
+  }
+
+  function applyLeader(span, stop) {
+    if (!stop.leader || stop.leader === "none") return;
+    span.addClass("is-leader");
+    span.setAttribute("data-leader", stop.leader);
   }
 
   function appendBreak(parent) {
@@ -571,7 +659,11 @@ function createDocxRenderer(opts) {
     const height = run.heightPx && run.heightPx > 0 ? run.heightPx : null;
     if (width) wrap.style.width = width + "px";
     if (height) wrap.style.height = height + "px";
-    if (run.anchor) wrap.addClass("ov-docx-image-float");
+    if (run.anchor && run.anchor.outOfFlow) {
+      applyAnchorStyles(wrap, run.anchor, contentWidthPx, width || 0);
+    } else if (run.anchor) {
+      wrap.addClass("ov-docx-image-float");
+    }
     if (run.url) {
       const img = wrap.createEl("img");
       img.src = run.url;
@@ -594,6 +686,7 @@ function createDocxRenderer(opts) {
   function renderShapeGroup(parent, run) {
     drawShapeGroup(parent, run, {
       theme: model.theme,
+      contentWidthPx,
       mediaUrl: (rid) => model.mediaUrl(rid),
       parseParagraph: (el) => require("./parse").parseParagraph(el, model, { listCounters: new Map() }),
       drawParagraph: (block, host) => renderParagraph(block, host),
@@ -604,9 +697,30 @@ function createDocxRenderer(opts) {
   function renderTextBox(parent, run, paraProps) {
     const box = parent.createDiv("ov-docx-textbox");
     if (run.widthPx) box.style.maxWidth = Math.min(run.widthPx, contentWidthPx) + "px";
+    if (run.anchor && run.anchor.outOfFlow) {
+      box.style.width = Math.min(run.widthPx || contentWidthPx, contentWidthPx) + "px";
+      applyAnchorStyles(box, run.anchor, contentWidthPx, run.widthPx || 0);
+    }
     const props = paraProps || null;
     renderInline(run.runs, box, props, { listCounters: new Map() });
     if (run.alt) box.title = run.alt;
+  }
+
+  // True when a paragraph carries an out-of-flow drawing. The paragraph then
+  // becomes the positioning context for the anchors inside it.
+  function hasAnchoredRun(runs) {
+    for (const run of runs || []) {
+      if (!run) continue;
+      if (run.anchor && run.anchor.outOfFlow) return true;
+      if (run.type === "run" && hasAnchoredRun(run.runs)) return true;
+      if (run.type === "link" && hasAnchoredRun(run.link.runs)) return true;
+    }
+    return false;
+  }
+
+  function flowWidth(run) {
+    if (run.anchor && run.anchor.outOfFlow) return 0;
+    return Number(run.widthPx) > 0 ? Number(run.widthPx) : 0;
   }
 
   function renderPlaceholder(parent, run) {

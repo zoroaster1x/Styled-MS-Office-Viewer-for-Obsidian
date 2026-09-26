@@ -317,6 +317,9 @@ function parseRun(el, model, ctx) {
     return { type: "text", text: runs[0].text, props: rPr };
   }
   if (!runs.length) return null;
+  // A run with one child is that child: a wrapper would hide a tab from the
+  // content after it, which is what a right tab measures.
+  if (runs.length === 1) return runs[0];
   return { type: "run", runs, props: rPr, isLink: false };
 }
 
@@ -341,8 +344,8 @@ function parseDrawing(el, model, ctx) {
   const extent = firstOf(container, "extent");
   const cx = extent ? attrInt(extent, "cx", 0) : 0;
   const cy = extent ? attrInt(extent, "cy", 0) : 0;
-  const graphic = firstOf(container, "graphic");
-  if (!graphic) return null;
+  const anchorInfo = anchor ? parseAnchor(anchor) : null;
+  const graphic = firstOf(container, "graphic");  if (!graphic) return null;
   const graphicData = firstOf(graphic, "graphicData");
   if (!graphicData) return null;
   const docPrEarly = firstOf(container, "docPr");
@@ -375,6 +378,7 @@ function parseDrawing(el, model, ctx) {
           name: shapeName,
           alt: altText,
           texts,
+          anchor: anchorInfo,
         };
       }
       if (!textbox) return null;
@@ -394,6 +398,7 @@ function parseDrawing(el, model, ctx) {
         heightPx: cy ? cy / 9525 : 0,
         name: shapeName,
         alt: altText,
+        anchor: anchorInfo,
       };
     } else if (tag === "chart" || tag === "chartex") {
       return { type: "placeholder", kind: "chart", label: "Chart", widthPx: cx / 9525, heightPx: cy / 9525 };
@@ -420,6 +425,7 @@ function parseDrawing(el, model, ctx) {
         name: shapeName,
         alt: altText,
         texts,
+        anchor: anchorInfo,
       };
     }
   }
@@ -441,9 +447,41 @@ function parseDrawing(el, model, ctx) {
     name,
     alt,
     rotation: 0,
-    anchor: anchor ? { type: anchor.getAttribute("relativeFrom") || "unknown" } : null,
+    anchor: anchorInfo,
     wrap: parseWrap(anchor),
     geometry,
+  };
+}
+
+// A wp:anchor carries its own position. wrapNone objects take no space in the
+// line: they are placed from these offsets, so a nose-bridge trapezoid sits
+// under the ruler instead of at the start of its paragraph.
+function parseAnchor(el) {
+  const readPosition = (pos, fallbackFrom) => {
+    if (!pos) return { from: fallbackFrom, offset: null, align: null };
+    const offsetEl = firstOf(pos, "posOffset");
+    const alignEl = firstOf(pos, "align");
+    let offset = null;
+    if (offsetEl) {
+      // wp:posOffset carries the value as its text, not an attribute.
+      const value = parseInt(offsetEl.textContent || "", 10);
+      if (!isNaN(value)) offset = value;
+    }
+    return {
+      from: attr(pos, "relativeFrom") || fallbackFrom,
+      offset,
+      align: alignEl ? attr(alignEl, "val") : null,
+    };
+  };
+  const h = readPosition(firstOf(el, "positionH"), "column");
+  const v = readPosition(firstOf(el, "positionV"), "paragraph");
+  const wrap = parseWrap(el);
+  return {
+    h,
+    v,
+    behindDoc: attrBool(el, "behindDoc", false),
+    wrap,
+    outOfFlow: wrap === "wrapNone",
   };
 }
 
@@ -451,7 +489,8 @@ function parseWrap(anchor) {
   if (!anchor) return null;
   for (const child of anchor.children || []) {
     const tag = tagName(child);
-    if (tag === "wrapSquare" || tag === "wrapTight" || tag === "wrapThrough" || tag === "wrapTopAndBottom") {
+    if (tag === "wrapSquare" || tag === "wrapTight" || tag === "wrapThrough"
+      || tag === "wrapTopAndBottom" || tag === "wrapNone") {
       return tag;
     }
   }
