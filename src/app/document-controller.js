@@ -80,6 +80,11 @@ class DocumentController {
         this.callbacks.onOutline ? this.callbacks.onOutline(this.outline) : null;
         this.emitStatus();
       },
+      onPageChange: (info) => {
+        this.currentPage = info.page || 1;
+        this.pageTotal = info.count || 0;
+        this.callbacks.onPage ? this.callbacks.onPage(info) : null;
+      },
     });
   }
 
@@ -288,6 +293,7 @@ function plainText(runs) {
     if (run.type === "text") out += run.text + " ";
     else if (run.type === "run") out += plainText(run.runs);
     else if (run.type === "link") out += plainText(run.link.runs);
+    else if (run.type === "shapegroup" && run.texts) out += run.texts.join(" ") + " ";
   }
   return out;
 }

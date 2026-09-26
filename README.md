@@ -15,7 +15,7 @@ The plugin is **strictly read only**. It parses a file in memory and draws it; i
 | Excel | `.xlsx` `.xlsm` `.xltx` `.xltm` | Styled grid: solid and gradient fills, theme colours with tints, fonts, every border style, merged cells, frozen rows and columns, hidden rows and columns, row and column sizes, wrapped text, number formats including dates, times and elapsed time, autofilters with filter chips, row and column outline groups, conditional formatting (colour scales, data bars, cell and text rules, icon sets), sheet tabs, hyperlinks, search |
 | Delimited | `.csv` `.tsv` | The same grid. The delimiter is sniffed (comma, tab, semicolon, pipe), quoting follows RFC 4180, and numbers become real numbers |
 | OpenDocument | `.ods` | The same grid, read from `content.xml` and `styles.xml` |
-| Word | `.docx` `.docm` `.dotx` `.dotm` | Real style cascade (document defaults, named styles, basedOn chains, direct formatting), headings, lists with real numbering and counters, tables with merged cells and per-cell borders and fills, inline and floating images, page size and margins, headers and footers, footnotes and endnotes, hyperlinks, typeset OMML equations, character effects, theme colours |
+| Word | `.docx` `.docm` `.dotx` `.dotm` | Real style cascade (document defaults, named styles, basedOn chains, direct formatting), headings, lists with real numbering and counters, tables with merged cells and per-cell borders and fills, inline and floating images, inline drawing groups (text boxes, pictures, preset silhouettes, freeform lines and connectors), page size and margins, headers and footers with live `PAGE` and `NUMPAGES`, footnotes and endnotes, hyperlinks, typeset OMML equations, character effects, theme colours |
 | OpenDocument | `.odt` | Paragraphs, headings, lists, spans with character styles, tables, page setup |
 | Rich text | `.rtf` | Character styles, paragraph alignment, spacing and indents, colours, fonts, tables |
 | PowerPoint | `.pptx` `.pptm` `.ppsx` `.ppsm` `.potx` `.potm` | Slide canvas with shapes, groups, freeform paths, connectors with arrowheads, pictures with crop, tables, text with wrapping, bullets, indents and autofit, theme colours, gradients and patterns, shadows, embedded fonts, equations, SmartArt drawings, speaker notes, thumbnail rail, slide search, slideshow mode |
@@ -99,7 +99,7 @@ A toolbar sits above every file. It carries search, zoom, and the actions that f
 
 **Workbooks.** Drag column and row header edges to size them, double click an edge to fit it to its content, and the sizes are remembered per sheet. Filter chips above the grid hide whole groups in one click, and the full filter dropdown stays available on every filterable column. Conditional formatting and frozen panes are drawn as the file declares them.
 
-**Documents.** The body is split into pages with a quiet page number in the bottom margin when the document has no footer of its own. Text and images are selectable and copyable. The outline panel lists the headings.
+**Documents.** The body is split into pages with a quiet page number in the bottom margin when the document has no footer of its own. Text and images are selectable and copyable. The outline panel lists the headings. The toolbar shows the page you are on beside the zoom, updated as you scroll, and changing the zoom keeps the same page in view.
 
 **Presentations.** A slideshow button (and the **Start or stop the slideshow** command) fills the pane with the slide, takes the arrow keys, space, Home and End, and leaves on Escape. Slides carry their final state: the renderer draws every shape and never plays the animation tree, so nothing is hidden behind an effect. The file's own transitions and animations are reported in the details panel instead of being played. A deck that embeds its fonts renders them, so it keeps its typography on a machine that never had the face installed.
 
@@ -135,8 +135,8 @@ Every number below comes from the harness in `test/`, over a library of universi
 
 | Check | Result |
 |---|---|
-| Text fidelity over 385 documents | 385 pass, 0 fail, 38.9 s |
-| Parse and render over 386 documents (217 Word, 163 decks, 1 workbook, 5 Word 97) | 0 failures, 13.35 s total, about 65 ms per deck |
+| Text fidelity over 396 documents | 396 pass, 0 fail, 45.9 s |
+| Parse and render over 397 documents (228 Word, 163 decks, 1 workbook, 5 Word 97) | 0 failures, 34.9 s with rendering |
 | Largest deck, 191 MB, 51 slides | opens in about 600 ms |
 | Reopening a cached document | no parse at all |
 | Hostile input (truncated, encrypted, traversal, ZIP bomb, entity payloads, bounded fuzz) | every case refused with a reason, no hang |
@@ -164,7 +164,8 @@ bun test/cache.mjs                  # the document cache and stale loads
 bun test/doc-legacy.mjs             # the compound reader and Word 97 text
 bun test/math.mjs                   # OMML equations, tree and layout
 bun test/pptx-layout.mjs            # synthetic deck: scripts, connectors, groups, paths
-bun test/docx-layout.mjs            # synthetic document: blank lines, pages, zoom
+bun test/docx-layout.mjs            # synthetic document: blank lines, pages, zoom, tables, fields
+bun test/drawing.mjs                # Word drawing groups: transforms, dashes, pictures, text
 bun test/tiff.mjs                   # the TIFF predictor, byte for byte
 bun test/embed-font.mjs             # embedded EOT/MTX fonts decode and register
 bun test/jxr.mjs                    # JPEG XR parts decode to real PNGs
@@ -196,7 +197,9 @@ These are honest gaps, not bugs waiting to be reported:
 - **Real chart parts** show a labelled placeholder. The numbers live in an embedded workbook that is not plotted. The charts that appear in most documents are plain vector shapes and text, and those are drawn.
 - **SmartArt** renders the drawing part PowerPoint stores beside the data, shapes and labels included. A diagram with no drawing part keeps a labelled placeholder.
 - **Animations and transitions** are never played: a reader must not lose content to an effect. The details panel reports what the file declares.
-- **Word's pagination is estimated.** Page breaks come from measured block heights, so a document can come out a page longer or shorter than Word makes it. Page size, margins, headers, footers and page numbers are real.
+- **Word's pagination is estimated.** Page breaks come from measured block heights, so a document can come out a page longer or shorter than Word makes it. Page size, margins, headers, footers and page numbers are real, and `PAGE` and `NUMPAGES` fields show the live numbers.
+- **A floating Word shape or text box is drawn in flow** at its anchor paragraph. Its size, fill, outline and text are its own, but it does not push nearby text aside the way Word's absolute anchor does.
+- **Legacy VML drawings** are read from the newer `wps` branch Word stores beside them; a file that carries only VML keeps its pictures, not its vector silhouettes.
 - **Unusual OMML structures** fall back to their own text rather than disappearing.
 - **Spreadsheet text rotation, images and comments** are not drawn. Rich text runs inside a cell keep the cell's own formatting.
 - **A long sheet builds only the rows near the viewport.** Copy, search and filters still see every row.

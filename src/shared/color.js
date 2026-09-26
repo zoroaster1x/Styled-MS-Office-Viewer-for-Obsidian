@@ -43,12 +43,14 @@ const THEME_SLOTS = [
   "hlink", "folHlink",
 ];
 
-// OOXML colour names used by w:themeColor to index the same scheme.
+// OOXML colour names used by w:themeColor to index the same scheme. The
+// DrawingML aliases (tx1, bg1, ...) resolve through the default colour map.
 const THEME_NAME_TO_INDEX = {
   dark1: 0, light1: 1, dark2: 2, light2: 3,
   accent1: 4, accent2: 5, accent3: 6, accent4: 7, accent5: 8, accent6: 9,
   hyperlink: 10, followedhyperlink: 11,
   background1: 1, text1: 0, background2: 3, text2: 2,
+  tx1: 0, bg1: 1, tx2: 2, bg2: 3,
 };
 
 function parseHex(hex) {

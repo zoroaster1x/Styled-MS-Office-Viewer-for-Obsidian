@@ -188,6 +188,7 @@ class OfficeView extends FileView {
     });
 
     this.zoomLabel = this.toolsEl.createSpan("ov-zoom-label");
+    this.pageLabelEl = this.toolsEl.createSpan("ov-page-label is-hidden");
 
     this.tabsEl = content.createDiv("ov-tabs");
     this.outlineEl = content.createDiv("ov-outline is-hidden");
@@ -246,7 +247,9 @@ class OfficeView extends FileView {
       });
     } else if (kind === "document") {
       this.outlineBtn = this.addButton("list", "Show or hide the heading outline", () => this.toggleOutline());
+      if (this.pageLabelEl) this.pageLabelEl.removeClass("is-hidden");
     }
+    if (this.pageLabelEl && kind !== "document") this.pageLabelEl.addClass("is-hidden");
     this.metaBtn = this.addButton("info", "Show or hide the file details", () => this.toggleMeta());
     this.addButton("refresh-cw", "Reload the file", () => this.reload());
     this.refreshToolbarState();
@@ -400,6 +403,7 @@ class OfficeView extends FileView {
       onFiltersChanged: () => this.refreshFilterBar(),
       onOutline: (outline) => this.renderOutline(outline),
       onSlideChange: (info) => this.updateTitleWithSlide(info),
+      onPage: (info) => this.updatePageIndicator(info),
       onReady: () => this.refreshToolbarState(),
       showContextMenu: (ev, items) => this.showContextMenu(ev, items),
     };
@@ -409,6 +413,15 @@ class OfficeView extends FileView {
     if (!this.file) return;
     const suffix = info && info.title ? " \u2013 " + info.title.replace(/\s+/g, " ").slice(0, 60) : "";
     this.titleEl.setText(this.file.name + (info ? "  (" + (info.index + 1) + "/" + info.count + ")" : "") + suffix);
+  }
+
+  // The page the reader is on, in the toolbar beside the zoom, so a long
+  // document never leaves them guessing which sheet is on screen.
+  updatePageIndicator(info) {
+    if (!this.pageLabelEl) return;
+    const show = Boolean(this.format && this.format.kind === "document" && info && info.count);
+    this.pageLabelEl.toggleClass("is-hidden", !show);
+    if (show) this.pageLabelEl.setText("Page " + info.page + " / " + info.count);
   }
 
   refreshFilterBar() {

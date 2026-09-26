@@ -110,6 +110,13 @@ These cost real time to find. They are all handled in the current code, so treat
 * A shape that holds a text box carries its paragraphs in `wps:txbx` / `w:txbxContent`. Dropping them loses text.
 * `PAGE` and `NUMPAGES` fields need the page number at draw time: the viewer paginates, so substitute the live numbers rather than the saved ones.
 * Footnote and endnote bodies live in their own parts; headers and footers are referenced from `w:sectPr`.
+* A Word drawing group is `mc:AlternateContent/mc:Choice` with `Requires="wpg"`, holding a `wpg:wgp` of `wps:wsp` shapes, `pic:pic` pictures and one nested `wpg:grpSp` level. Dropping the group (or reading the VML `mc:Fallback`) leaves a blank gap where a diagram and its photographs belong. `src/docx/drawing.js` walks the group: `wpg:grpSpPr/a:xfrm` maps `chOff`/`chExt` onto `off`/`ext`, an `off`/`ext` of zero is an identity transform, shapes are `wps:spPr` geometry plus fill and line, and text lives in `wps:txbx/w:txbxContent`. A group or shape with no stated line colour still takes the `wps:style` `a:lnRef` colour; an `a:ln` that only names a width does not blank the outline.
+* A standalone anchored shape (`mc:Choice Requires="wps"` with `wp:anchor`, no `wpg` around it) is a drawing too. A shape with geometry but no text box used to fall out of the parser and vanish, which is how an anchored orange trapezoid disappeared from a nose bridge.
+* `a:custDash` is not `a:prstDash`: it lists dash and gap lengths as thousandths of the line width (`d="300000" sp="225000"` is 3 and 2.25 line widths). Reading only `prstDash` draws every custom-dashed line solid.
+* DrawingML colour aliases `tx1`, `tx2`, `bg1`, `bg2` are not theme slot names; they resolve through the default colour map (`tx1` is `dk1`). Without them a line stated as `schemeClr tx1` falls through to a style colour and turns accent blue.
+* A `PAGE` or `NUMPAGES` field arrives as `fldChar` begin/instr/separate/end spread across separate `w:r` runs, so its state must outlive one recursion of the inline renderer. The saved result can be stale (a footer in a 31-page manual carries 53), so the live number is substituted for the result text.
+* A `vMerge` continuation cell must not be emitted at all. Writing it as an empty `<td>` on top of the restart cell's `rowspan` shifts every later cell one column right; the restart cell's rowspan is found by grid column, not by index in `row.cells`, because a `gridSpan` earlier in the row moves every later cell.
+* `td.colSpan` and `td.rowSpan` are properties that some hosts do not reflect onto the attribute. Serialising the rendered HTML (the test renderer, a copy of the DOM) then silently loses every merged cell, so set the attributes.
 
 ### Equations (OMML)
 
@@ -200,6 +207,8 @@ These cost real time to find. They are all handled in the current code, so treat
 * A capture-phase `contextmenu` listener on the host gives documents and decks their own menu (copy the selection, search for it, select all, file details, reload, open in the system editor) and stops the app's plain text menu from winning. The grid already had its own menu through the controller callback.
 * The details panel groups rows under headings, keeps its action buttons together at the right edge, offers a copy-as-text button, and hands the file to the system editor with a notice that names a free editor when that fails. This viewer never writes to the file, so any editing wish has to leave the plugin.
 * Undecodable media gets a placeholder that names the format ("JPEG XR (HP Photo) image, not decodable here") and a `Not drawn` row in the details, so a reader is never left guessing why a picture is missing.
+* A paginated document carries a live page indicator in the toolbar ("Page 14 / 31"), driven by the renderer's scroll listener and reported through `onPageChange`. The footer's own number is not enough: it sits at the bottom of the sheet the reader has already scrolled past.
+* Changing the document zoom must scale the scroll offset by the same ratio. CSS `zoom` scales the page layout but leaves `scrollTop` in unscaled pixels, so keeping the offset walks the reader down the document when zooming out and up when zooming in. `renderer.setSettings({ zoom })` adjusts the offset before the browser repaints.
 
 ## 7. Performance rules
 

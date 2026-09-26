@@ -111,6 +111,7 @@ check("view constructs", Boolean(view));
 if (view) {
   await view.onOpen();
   check("view builds chrome", Boolean(view.contentEl.querySelector(".ov-toolbar")));
+  check("page indicator element exists", Boolean(view.contentEl.querySelector(".ov-page-label")));
   check("empty state shown", (view.contentEl.textContent || "").indexOf("No document open") !== -1);
 }
 
