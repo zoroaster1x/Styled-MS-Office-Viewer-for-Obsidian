@@ -20,14 +20,23 @@
 
 "use strict";
 
-// XML helpers. Every part of an OOXML or ODF package is XML, so the traversal
-// code here is shared by all the parsers. Namespace prefixes are dropped:
-// a:blip and blip are the same element to us.
-
+// Namespace prefixes are dropped: a:blip and blip are the same element to us.
+// The stripped name and the local-name attribute map are cached on the element
+// itself, because a parse reads the same nodes thousands of times and the DOM
+// property lookups (especially the attribute list) dominate the walk.
 function tagName(el) {
+  if (!el) return "";
+  const cached = el.__ovTag;
+  if (cached !== undefined) return cached;
   const t = el.tagName || el.nodeName || "";
   const i = t.indexOf(":");
-  return i === -1 ? t : t.slice(i + 1);
+  const name = i === -1 ? t : t.slice(i + 1);
+  try {
+    el.__ovTag = name;
+  } catch (err) {
+    // A frozen node is rare; the uncached path still works.
+  }
+  return name;
 }
 
 function stripNs(name) {
@@ -106,21 +115,30 @@ function findAll(el, tag, out) {
   return acc;
 }
 
+const ATTR_MAPS = new WeakMap();
+
 function attr(el, name) {
   if (!el || !el.getAttribute) return null;
   // WordprocessingML and PresentationML qualify most attributes with the
   // document namespace, so a plain lookup has to fall back to the local name.
   let v = el.getAttribute(name);
   if (v !== null) return v;
-  if (el.attributes) {
-    for (let i = 0; i < el.attributes.length; i++) {
-      const a = el.attributes[i];
-      if (a.name === name) return a.value;
-      const local = a.name.indexOf(":") === -1 ? a.name : a.name.slice(a.name.indexOf(":") + 1);
-      if (local === name) return a.value;
+  // The local-name map is built once per element: walking the attribute list
+  // on every miss is the slowest part of a parse.
+  let map = ATTR_MAPS.get(el);
+  if (!map) {
+    map = new Map();
+    if (el.attributes) {
+      for (let i = 0; i < el.attributes.length; i++) {
+        const a = el.attributes[i];
+        const local = a.name.indexOf(":") === -1 ? a.name : a.name.slice(a.name.indexOf(":") + 1);
+        if (!map.has(local)) map.set(local, a.value);
+      }
     }
+    ATTR_MAPS.set(el, map);
   }
-  return null;
+  const hit = map.get(name);
+  return hit === undefined ? null : hit;
 }
 
 // Attributes in XML use a prefix; callers pass the local name.
