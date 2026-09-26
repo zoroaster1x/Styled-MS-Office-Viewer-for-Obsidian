@@ -36,6 +36,12 @@ const DEFAULT_PAGE_WIDTH_TW = 11906;
 const DEFAULT_PAGE_HEIGHT_TW = 16838;
 const DEFAULT_MARGIN_TW = 1440;
 
+// Text measurement is shared by every renderer, so the measuring canvas and the
+// cache live here rather than per mount.
+let SHARED_MEASURE_CTX = null;
+const MEASURE_CACHE = new Map();
+const MEASURE_CACHE_LIMIT = 40000;
+
 function createDocxRenderer(opts) {
   const container = opts.container;
   const model = opts.model;
@@ -78,21 +84,24 @@ function createDocxRenderer(opts) {
   let searchCurrentEl = null;
 
   // Text measurement for pagination. The same font stack the runs use, so the
-  // line count matches what the browser will lay out.
-  let measureCtx = null;
-  const measureCache = new Map();
+  // line count matches what the browser will lay out. The canvas and its cache
+  // are shared by every renderer: the same strings measure the same in every
+  // document, so re-planning a cached file or opening the same text again is
+  // free.
   function measureWidth(text, font) {
     const cacheKey = font + "\u0000" + text;
-    if (measureCache.has(cacheKey)) return measureCache.get(cacheKey);
+    const hit = MEASURE_CACHE.get(cacheKey);
+    if (hit !== undefined) return hit;
     try {
-      if (!measureCtx) {
-        const canvas = doc.createElement("canvas");
-        measureCtx = canvas.getContext ? canvas.getContext("2d") : null;
+      if (!SHARED_MEASURE_CTX && typeof document !== "undefined" && document.createElement) {
+        const canvas = document.createElement("canvas");
+        SHARED_MEASURE_CTX = canvas.getContext ? canvas.getContext("2d") : null;
       }
-      if (!measureCtx) return text.length * 6;
-      measureCtx.font = font;
-      const width = measureCtx.measureText(text).width;
-      measureCache.set(cacheKey, width);
+      if (!SHARED_MEASURE_CTX) return text.length * 6;
+      SHARED_MEASURE_CTX.font = font;
+      const width = SHARED_MEASURE_CTX.measureText(text).width;
+      if (MEASURE_CACHE.size >= MEASURE_CACHE_LIMIT) MEASURE_CACHE.clear();
+      MEASURE_CACHE.set(cacheKey, width);
       return width;
     } catch (err) {
       return text.length * 6;
