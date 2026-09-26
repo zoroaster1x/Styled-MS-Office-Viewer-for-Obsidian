@@ -38,6 +38,7 @@ const DEFAULT_SETTINGS = {
   documentZoom: 100,
   pageBackground: "white",
   showPageNumbers: true,
+  virtualizePages: true,
   // Presentations
   slideZoom: 100,
   slideFit: "contain",
@@ -307,11 +308,20 @@ class OfficeViewerSettingTab extends PluginSettingTab {
 
     new Setting(containerEl)
       .setName("Show page numbers")
-      .setDesc("Replace PAGE and NUMPAGES fields with the number they stood for when the document was last saved.")
+      .setDesc("Substitute the live PAGE and NUMPAGES numbers where the document has them.")
       .addToggle((toggle) =>
         toggle
           .setValue(this.plugin.settings.showPageNumbers !== false)
           .onChange((value) => this.plugin.updateSetting("showPageNumbers", value))
+      );
+
+    new Setting(containerEl)
+      .setName("Windowed page rendering")
+      .setDesc("Draw only the pages near the viewport. Large documents open much faster; pages appear as you scroll to them.")
+      .addToggle((toggle) =>
+        toggle
+          .setValue(this.plugin.settings.virtualizePages !== false)
+          .onChange((value) => this.plugin.updateSetting("virtualizePages", value))
       );
 
     containerEl.createEl("h3", { text: "Presentations" });

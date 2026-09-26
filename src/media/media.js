@@ -107,7 +107,7 @@ function buildMediaUrl(pkg, path) {
     // a broken image. JPEG XL is still undecodable here.
     if (/^image\/(vnd\.ms-photo|jxr)$/i.test(mime) || /\.(wdp|hdp|jxr)$/i.test(path)) {
       const image = decodeJxrRgba(bytes);
-      return image ? pngDataUrl(image.data, image.width, image.height) : null;
+      return image ? pixelsToDataUrl(image.data, image.width, image.height) : null;
     }
     if (/^image\/jxl$/i.test(mime) || /\.jxl$/i.test(path)) return null;
     if (mime === "image/emf" || /\.emf$/i.test(path)) return metafileToDataUrl(bytes, "emf");
@@ -235,7 +235,7 @@ function tiffToDataUrl(bytes) {
   }
   const orientation = ifd.number(TIFF_TAGS.orientation) || 1;
   const oriented = orientRgba(rgba, width, height, orientation);
-  return pngDataUrl(oriented.data, oriented.width, oriented.height);
+  return pixelsToDataUrl(oriented.data, oriented.width, oriented.height);
 }
 
 function readTiffIfd(view, offset, le, bytes) {
@@ -517,6 +517,34 @@ function base64FromBytes(bytes) {
     parts.push(String.fromCharCode.apply(null, bytes.subarray(i, i + 0x8000)));
   }
   return btoa(parts.join(""));
+}
+
+// RGBA pixels to a PNG. Chromium's own encoder runs in native code and is many
+// times faster than deflating the scanlines in JavaScript, so the canvas is
+// used whenever it produces a real image. The JavaScript encoder stays as the
+// fallback, and it is what the headless tests exercise, so the bytes are still
+// checkable outside a browser.
+function pixelsToDataUrl(rgba, width, height) {
+  if (!width || !height || !rgba || rgba.length < width * height * 4) return null;
+  if (typeof document !== "undefined" && document.createElement && typeof ImageData === "function") {
+    try {
+      const canvas = document.createElement("canvas");
+      canvas.width = width;
+      canvas.height = height;
+      const ctx = canvas.getContext ? canvas.getContext("2d") : null;
+      if (ctx && typeof ctx.putImageData === "function") {
+        const copy = rgba instanceof Uint8ClampedArray ? rgba : new Uint8ClampedArray(rgba.buffer ? rgba.buffer.slice(rgba.byteOffset, rgba.byteOffset + width * height * 4) : rgba);
+        ctx.putImageData(new ImageData(copy, width, height), 0, 0);
+        const url = canvas.toDataURL("image/png");
+        // The test harness canvas returns a stub; anything that short is not a
+        // real PNG and falls through to the encoder below.
+        if (typeof url === "string" && url.length > 64) return url;
+      }
+    } catch (err) {
+      // Any canvas refusal falls back to the JavaScript encoder.
+    }
+  }
+  return pngDataUrl(rgba, width, height);
 }
 
 function pngDataUrl(rgba, width, height) {

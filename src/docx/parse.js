@@ -75,10 +75,6 @@ function parseDocx(input) {
     hyperlinks: new Map(),
   };
 
-  // Bookmark targets for internal links.
-  const bookmarkTargets = new Map();
-  collectBookmarks(documentXml.documentElement, bookmarkTargets);
-  model.bookmarks = bookmarkTargets;
 
   const body = firstOf(documentXml.documentElement, "body");
   if (!body) throw new Error("The document body is missing.");
@@ -589,8 +585,8 @@ function parseDrawing(el, model, ctx) {
   if (!blip) return null;
   const rid = attr(blip, "embed") || attrNs(blip, "embed") || attr(blip, "link");
   if (!rid) return null;
-  const url = model.mediaUrl(rid);
-  if (!url) return null;
+  // The picture's bytes stay in the package until the page is drawn: a parse
+  // must not transcode every metafile or JPEG XR picture in the document.
   const docPr = firstOf(container, "docPr");
   const name = docPr ? attr(docPr, "name") : "";
   const alt = docPr ? (attr(docPr, "descr") || name) : "";
@@ -598,7 +594,7 @@ function parseDrawing(el, model, ctx) {
   return {
     type: "image",
     rid,
-    url,
+    url: null,
     widthPx: Math.round((cx / 9525) * 100) / 100,
     heightPx: Math.round((cy / 9525) * 100) / 100,
     name,
@@ -675,15 +671,13 @@ function parseLegacyPicture(el, model) {
   if (!imagedata) return null;
   const rid = attrNs(imagedata, "id") || attr(imagedata, "id") || attrNs(imagedata, "embed");
   if (!rid) return null;
-  const url = model.mediaUrl(rid);
-  if (!url) return null;
   const style = shape ? attr(shape, "style") || "" : "";
   const widthMatch = /width:([\d.]+)pt/.exec(style);
   const heightMatch = /height:([\d.]+)pt/.exec(style);
   return {
     type: "image",
     rid,
-    url,
+    url: null,
     widthPx: widthMatch ? Math.round(parseFloat(widthMatch[1]) * 96 / 72) : 0,
     heightPx: heightMatch ? Math.round(parseFloat(heightMatch[1]) * 96 / 72) : 0,
     name: shape ? attr(shape, "alt") || "" : "",
@@ -863,18 +857,6 @@ function toRoman(n) {
     }
   }
   return out;
-}
-
-// ---------- bookmarks ----------
-
-function collectBookmarks(el, out) {
-  for (const child of el.children || []) {
-    if (tagName(child) === "bookmarkStart") {
-      const name = attr(child, "name");
-      if (name) out.set(name, true);
-    }
-    collectBookmarks(child, out);
-  }
 }
 
 // ---------- sections and properties ----------
