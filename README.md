@@ -2,7 +2,11 @@
 
 Read Microsoft Office and OpenDocument files inside Obsidian with the styling they were saved with. Workbooks keep their fills, fonts, borders, merged cells and frozen panes. Word documents are laid out as pages. Presentations open as slides with a thumbnail rail, a slideshow mode and speaker notes.
 
-The plugin is strictly read only. It parses a file in memory and draws it; it never writes to your documents and has no save path at all.
+The plugin is **strictly read only**. It parses a file in memory and draws it; it never writes to your documents and has no save path at all.
+
+**[Supported formats](#supported-formats)** · **[Install](#installing)** · **[How it works](#how-it-works)** · **[Settings](#settings)** · **[Benchmarks](#measured-against-real-documents)** · **[Known limits](#known-limits)** · **[Funding](#funding)** · **[License](#license)**
+
+---
 
 ## Supported formats
 
@@ -20,17 +24,29 @@ The plugin is strictly read only. It parses a file in memory and draws it; it ne
 
 **Not supported:** `.xls` and `.ppt`. Their content lives in a legacy binary format this reader does not walk; opening one shows a clear message with a button to hand the file to the system viewer, and converting to `.xlsx` or `.pptx` is the fix.
 
+---
+
 ## Installing
 
 1. Copy `main.js`, `manifest.json`, `styles.css` and `versions.json` into `<Vault>/.obsidian/plugins/styled-ms-office-viewer/`.
-2. In Obsidian, open Settings, then Community plugins, and turn Restricted mode off.
+2. In Obsidian, open **Settings → Community plugins** and turn Restricted mode off.
 3. Reload the installed plugins, then enable **Styled MS Office Viewer**.
 
-From a source checkout, `./install.sh /path/to/YourVault` builds the bundle and copies the four files into place.
+From a source checkout:
+
+```bash
+./install.sh /path/to/YourVault
+```
+
+builds the bundle and copies the four files into place.
+
+---
 
 ## Read only, by design
 
 There is no save path in this plugin. It reads bytes from the vault, parses them in memory and draws them. The only thing it writes is its own settings, which remember which sheet, filters and slide you were last on. If you want to edit a file, use the application that made it.
+
+---
 
 ## How it works
 
@@ -72,8 +88,10 @@ The path from a file on disk to pixels on screen:
 
 Two design choices decide whether a 190 MB deck opens in half a second or five:
 
-- Media is inflated and transcoded on first use, so a deck never pays for pictures it does not draw.
-- Only XML parts are inflated at open, and they inflate once for the lifetime of the cached model.
+- **Media is inflated and transcoded on first use**, so a deck never pays for pictures it does not draw.
+- **Only XML parts are inflated at open**, and they inflate once for the lifetime of the cached model.
+
+---
 
 ## Using the viewer
 
@@ -86,6 +104,8 @@ A toolbar sits above every file. It carries search, zoom, and the actions that f
 **Presentations.** A slideshow button (and the **Start or stop the slideshow** command) fills the pane with the slide, takes the arrow keys, space, Home and End, and leaves on Escape. Slides carry their final state: the renderer draws every shape and never plays the animation tree, so nothing is hidden behind an effect. The file's own transitions and animations are reported in the details panel instead of being played. A deck that embeds its fonts renders them, so it keeps its typography on a machine that never had the face installed.
 
 **File details.** The info button opens a panel with name, path, size and date, then everything the file says about itself: author, application, revision, timestamps, slide and sheet counts, words, characters and pages, languages, media and more. A file or deck can also carry its own context menu for copying the selection, searching, selecting all text, file details, reload, and opening in the system editor.
+
+---
 
 ## Settings
 
@@ -107,6 +127,8 @@ A toolbar sits above every file. It carries search, zoom, and the actions that f
 | | Pinch to zoom | A touchpad pinch over the view steps the zoom |
 | | Invert pinch zoom | Swap the pinch direction |
 
+---
+
 ## Measured against real documents
 
 Every number below comes from the harness in `test/`, over a library of university lecture handouts and slide decks: mostly `.docx`, mostly `.pptx`, from a few kilobytes to 190 MB, with photographs, vector figures, speaker notes and forms.
@@ -120,6 +142,8 @@ Every number below comes from the harness in `test/`, over a library of universi
 | Hostile input (truncated, encrypted, traversal, ZIP bomb, entity payloads, bounded fuzz) | every case refused with a reason, no hang |
 
 Text fidelity means every text run in the source XML appears in the rendered output. The harness is `test/fidelity.mjs`, and it can be pointed at any folder through `.testenv`.
+
+---
 
 ## Testing
 
@@ -162,6 +186,8 @@ python3 test/compare-reference.py   # diff against a reference conversion
 
 Anything left unset in `.testenv` is skipped with a notice, and a path that is set but missing stops the run, so a typo is not mistaken for a pass. `test/harness.mjs` gives linkedom the Obsidian element extensions and a canvas stub, so the parsers and renderers run outside Obsidian with no mocks inside the plugin code.
 
+---
+
 ## Known limits
 
 These are honest gaps, not bugs waiting to be reported:
@@ -181,8 +207,26 @@ These are honest gaps, not bugs waiting to be reported:
 - **Deeply nested groups with their own scaling and rotation** can be a few pixels out.
 - **Shape effects** are approximated: a shadow keeps its distance and blur, a 3-D bevel is not modelled.
 
-## Licence
+---
 
-GPL-3.0-or-later. Copyright (C) 2026 Zoroaster1x. See `LICENSE`.
+## Funding
 
-Bundled libraries and their licences are listed in `docs/references.md`, in the notices beside the code, and in the source headers.
+If this plugin saves you time, consider supporting its development. Every contribution goes toward maintenance, new format coverage and the long tail of edge cases that make real documents painful to render.
+
+**Monero (XMR):**
+
+```
+8BdxmQSniku4dBJXWPXeXvgjztmj5nmvWQqeCrVvCtYciusbAyo4rqrGCefTfQ4gGaVZmLN7VgLiYUYyBdYFEwHn1UWPjWs
+```
+
+> **Tip:** You can easily purchase Litecoin using [Cake Wallet](https://cakewallet.com/) and then, within the app, create a Monero wallet and exchange the Litecoin into it, pointed at the address above.
+
+Crypto isn't your thing? Starring the repository, filing clear bug reports with a sample file, and telling other Obsidian users about the plugin all help just as much.
+
+---
+
+## License
+
+GPL-3.0-or-later. Copyright (C) 2026 Zoroaster1x. See [`LICENSE`](LICENSE).
+
+Bundled libraries and their licenses are listed in [`docs/references.md`](docs/references.md), in the notices beside the code, and in the source headers.
