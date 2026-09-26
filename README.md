@@ -135,8 +135,8 @@ Every number below comes from the harness in `test/`, over a library of universi
 
 | Check | Result |
 |---|---|
-| Text fidelity over 396 documents | 396 pass, 0 fail, 45.9 s |
-| Parse and render over 397 documents (228 Word, 163 decks, 1 workbook, 5 Word 97) | 0 failures, 34.9 s with rendering |
+| Text fidelity over 396 documents | 396 pass, 0 fail, 43.1 s |
+| Parse and render over 397 documents (228 Word, 163 decks, 1 workbook, 5 Word 97) | 0 failures, 36.6 s with rendering |
 | Largest deck, 191 MB, 51 slides | opens in about 600 ms |
 | Reopening a cached document | no parse at all |
 | Hostile input (truncated, encrypted, traversal, ZIP bomb, entity payloads, bounded fuzz) | every case refused with a reason, no hang |
@@ -166,6 +166,7 @@ bun test/math.mjs                   # OMML equations, tree and layout
 bun test/pptx-layout.mjs            # synthetic deck: scripts, connectors, groups, paths
 bun test/docx-layout.mjs            # synthetic document: blank lines, pages, zoom, tables, fields
 bun test/drawing.mjs                # Word drawing groups: transforms, dashes, pictures, text
+bun test/vml.mjs                    # legacy VML shapes, groups, coordinates and text boxes
 bun test/tiff.mjs                   # the TIFF predictor, byte for byte
 bun test/embed-font.mjs             # embedded EOT/MTX fonts decode and register
 bun test/jxr.mjs                    # JPEG XR parts decode to real PNGs
@@ -199,7 +200,8 @@ These are honest gaps, not bugs waiting to be reported:
 - **Animations and transitions** are never played: a reader must not lose content to an effect. The details panel reports what the file declares.
 - **Word's pagination is estimated.** Page breaks come from measured block heights, so a document can come out a page longer or shorter than Word makes it. Page size, margins, headers, footers and page numbers are real, and `PAGE` and `NUMPAGES` fields show the live numbers.
 - **A floating Word shape or text box is drawn in flow** at its anchor paragraph. Its size, fill, outline and text are its own, but it does not push nearby text aside the way Word's absolute anchor does.
-- **Legacy VML drawings** are read from the newer `wps` branch Word stores beside them; a file that carries only VML keeps its pictures, not its vector silhouettes.
+- **VML drawings** (older `.docx` files and the Fallback branch of a shape) are drawn: shapes, groups, lines, text boxes and pictures. Word's own wrap algorithm is approximated, so a legacy floating diagram can sit a little differently from Word.
+- **Text columns** are not laid out: a multi-column section reads as one column. Page borders and a drop cap's float are not drawn.
 - **Unusual OMML structures** fall back to their own text rather than disappearing.
 - **Spreadsheet text rotation, images and comments** are not drawn. Rich text runs inside a cell keep the cell's own formatting.
 - **A long sheet builds only the rows near the viewport.** Copy, search and filters still see every row.
