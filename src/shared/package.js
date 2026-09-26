@@ -30,7 +30,6 @@
 const { inflateSync } = require("fflate");
 const { parseXml, attr, tagName } = require("./xml");
 
-const INDEXED_PART = /\.(xml|rels|vml)$/i;
 
 function dirOf(path) {
   const slash = path.lastIndexOf("/");
@@ -92,19 +91,15 @@ function relTypeIs(rel, kind) {
 class Package {
   constructor(bytes) {
     this.archive = bytes instanceof Uint8Array ? bytes : new Uint8Array(bytes);
-    // The central directory is read and checked first, then only the XML parts
-    // are inflated. A 200 MB deck therefore costs its directory plus its XML,
-    // not a walk over every media entry, and a malformed or hostile archive is
-    // rejected with a reason instead of failing somewhere inside a parser.
+    // The central directory is read and checked first. A 200 MB deck therefore
+    // costs its directory, not a walk over every entry, and a malformed or
+    // hostile archive is rejected with a reason instead of failing somewhere
+    // inside a parser. Every part, XML included, inflates on first use: a
+    // package pays for what its reader actually asks for.
     const directory = readCentralDirectory(this.archive);
     this._entries = directory.entries;
     this._names = Array.from(directory.entries.keys()).sort();
     this._files = {};
-    for (const [name, entry] of directory.entries) {
-      if (!INDEXED_PART.test(name)) continue;
-      const data = inflateEntry(this.archive, entry);
-      if (data) this._files[name] = data;
-    }
     this._decoder = new TextDecoder("utf-8");
     this._text = new Map();
     this._rels = new Map();
@@ -112,11 +107,46 @@ class Package {
   }
 
   static open(input) {
+    // A view can prepare the archive with the platform decoder first; a parser
+    // then finds the same bytes already inflated.
+    const prepared = input && PREPARED.get(input);
+    if (prepared) {
+      PREPARED.delete(input);
+      return prepared;
+    }
     try {
       return new Package(input);
     } catch (err) {
       if (err && err.zipReason) throw new Error("This file is not a readable ZIP package (" + err.zipReason + ").");
       throw new Error("This file is not a readable ZIP package (" + err.message + ").");
+    }
+  }
+
+  // Inflates the XML parts in parallel with the platform's decompressor, before
+  // a parser is handed the bytes. Chromium runs the decompression off the JS
+  // heap, and all parts proceed together, so a large package's XML is ready in
+  // a fraction of the synchronous walk. Hosts without DecompressionStream fall
+  // back to inflating each part on first use, which is where they already were.
+  async preload() {
+    if (this._preloaded) return this;
+    this._preloaded = true;
+    if (typeof DecompressionStream !== "function") return this;
+    const names = this._names.filter((name) => /\.(xml|rels|vml)$/i.test(name));
+    await Promise.all(names.map((name) => this._inflateAsync(name)));
+    return this;
+  }
+
+  async _inflateAsync(name) {
+    if (this._files[name]) return;
+    const entry = this._entries.get(name);
+    if (!entry || entry.method === 0) return;
+    try {
+      const data = this.archive.subarray(entry.dataOffset, entry.dataOffset + entry.compressed);
+      const stream = new Blob([data]).stream().pipeThrough(new DecompressionStream("deflate-raw"));
+      const out = new Uint8Array(await new Response(stream).arrayBuffer());
+      if (!entry.uncompressed || out.length === entry.uncompressed) this._files[name] = out;
+    } catch (err) {
+      // A part the decoder refuses inflates through the synchronous path.
     }
   }
 
@@ -423,8 +453,33 @@ const MIME_BY_EXT = {
   wmv: "video/x-ms-wmv",
 };
 
+// Bytes prepared by a view, waiting for their parser: one use, then forgotten.
+const PREPARED = new WeakMap();
+
+// Prepares a package for a parser that is about to open the same bytes. Errors
+// are the parser's to report; this only makes the common path faster.
+async function preparePackage(input) {
+  if (!input || typeof input !== "object") return null;
+  const existing = PREPARED.get(input);
+  if (existing) return existing;
+  let pkg;
+  try {
+    pkg = Package.open(input);
+  } catch (err) {
+    return null;
+  }
+  try {
+    await pkg.preload();
+  } catch (err) {
+    // The synchronous path still inflates every part.
+  }
+  PREPARED.set(input, pkg);
+  return pkg;
+}
+
 module.exports = {
   Package,
+  preparePackage,
   parseRels,
   relsPathFor,
   resolvePath,

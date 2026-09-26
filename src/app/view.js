@@ -33,6 +33,7 @@ const { DocumentController } = require("./document-controller");
 const { PresentationController } = require("./presentation-controller");
 const { detectFormat } = require("./format-router");
 const { DocumentCache, releaseModel } = require("./document-cache");
+const { preparePackage } = require("../shared/package");
 const { ensureJxrDecoder } = require("../media/jxr");
 const { ensureEmbeddedFonts } = require("../pptx/fonts");
 const { describePackage, sectionsToText } = require("../shared/metadata");
@@ -334,6 +335,10 @@ class OfficeView extends FileView {
       const jxrBeforeParse = this.format.kind === "document";
       if (jxrBeforeParse) await ensureJxrDecoder();
 
+      // The platform decompressor inflates the package's XML while the first
+      // frame paints and the codec loads; the parser then opens prepared bytes.
+      const preparing = bytes ? preparePackage(bytes) : null;
+
       const saved = (this.plugin.settings.fileState || {})[file.path] || null;
       this.savedFileState = saved;
       const callbacks = this.controllerCallbacks();
@@ -368,6 +373,7 @@ class OfficeView extends FileView {
       } else {
         // Parse first. Restoring the remembered sheet or slide needs the parsed
         // model, so the order here matters.
+        if (preparing) await preparing;
         this.controller.load(bytes, file.name);
         if (bytes && (this.format.kind === "document" || this.format.kind === "presentation") && typeof this.controller.adoptModel === "function") {
           // The cache owns the model's media from here until it is evicted.

@@ -47,6 +47,9 @@ function createDocxRenderer(opts) {
     showPageNumbers: true,
     paginate: true,
     maxPageHeightPx: 0,
+    // Windowed rendering is off unless the view asks for it, so a reference
+    // render (and the test harness) always draws every page.
+    virtualize: false,
   }, opts.settings || {});
   const callbacks = {
     onInternalLink: opts.onInternalLink || function () {},
@@ -59,9 +62,20 @@ function createDocxRenderer(opts) {
   let rootEl = null;
   let scrollEl = null;
   let pagesEl = null;
-  const headingAnchors = new Map();
   const noteRefs = [];
-  const textItems = [];
+  // Windowed rendering: every page gets a shell at its planned height, and only
+  // the pages near the viewport carry their content. A long document opens at
+  // the cost of its first pages instead of all of them, and the pages far away
+  // give their DOM back.
+  let pageRecords = [];
+  const blockElements = new Map();
+  const anchorBlocks = new Map();
+  const headingNames = new Map();
+  let textIndex = [];
+  let searchHits = [];
+  let searchBlockSet = new Set();
+  let searchIndex = -1;
+  let searchCurrentEl = null;
 
   // Text measurement for pagination. The same font stack the runs use, so the
   // line count matches what the browser will lay out.
@@ -206,31 +220,151 @@ function createDocxRenderer(opts) {
     pagesEl = scrollEl.createDiv("ov-docx-pages");
     pagesEl.style.width = pageWidthPx + "px";
 
-    const pages = planPages(model.body);
-    totalPages = pages.length;
+    const plan = planPages(model.body);
+    totalPages = plan.length;
     let previousSection = -1;
-    pages.forEach((blocks, index) => {
-      currentPage = index + 1;
+    pageRecords = plan.map((entry, index) => {
+      const blocks = entry.blocks;
       const sectionIndex = blocks.length && blocks[0].section != null ? blocks[0].section : 0;
       const pageSection = (model.sectionList && model.sectionList[sectionIndex]) || section;
       const firstOfSection = sectionIndex !== previousSection;
       previousSection = sectionIndex;
-      const page = createPage();
+      const page = createPage(entry.height);
       page.el.dataset.section = String(sectionIndex);
-      renderBlocks(blocks, page.content, { state: { page, flow: page.content, usedHeight: 0 }, ctx: { listCounters: new Map(), pageCount: currentPage } });
-      finalizePage(page, currentPage, totalPages, pageSection, firstOfSection);
+      return {
+        number: index + 1,
+        blocks,
+        pageSection,
+        firstOfSection,
+        height: entry.height,
+        el: page.el,
+        header: page.header,
+        content: page.content,
+        footer: page.footer,
+        minHeight: page.minHeight,
+        rendered: false,
+      };
     });
+    buildBlockIndex();
+    if (settings.virtualize === true) {
+      renderPageWindow(1);
+    } else {
+      for (const record of pageRecords) renderPage(record);
+    }
     currentPage = 1;
     renderNotes();
     observePage();
     callbacks.onReady({ outline: buildOutline(), pageCount: totalPages });
   }
 
-  function createPage() {
+  // The DOM for one page, drawn on demand in windowed mode.
+  function renderPage(record) {
+    if (!record || record.rendered || destroyed) return;
+    const previousPage = currentPage;
+    const previousTotal = totalPages;
+    currentPage = record.number;
+    totalPages = pageRecords.length;
+    renderBlocks(record.blocks, record.content, {
+      state: { page: record, flow: record.content, usedHeight: 0 },
+      ctx: { listCounters: new Map(), pageCount: record.number },
+    });
+    finalizePage(
+      { el: record.el, header: record.header, content: record.content, footer: record.footer },
+      record.number,
+      totalPages,
+      record.pageSection,
+      record.firstOfSection
+    );
+    currentPage = previousPage;
+    totalPages = previousTotal;
+    record.rendered = true;
+  }
+
+  // A page far from the viewport keeps its height but gives its DOM back.
+  function unrenderPage(record) {
+    if (!record || !record.rendered) return;
+    record.header.textContent = "";
+    record.content.textContent = "";
+    record.footer.textContent = "";
+    record.el.style.minHeight = record.minHeight + "px";
+    record.rendered = false;
+    forEachBlock(record.blocks, (block) => blockElements.delete(block));
+  }
+
+  const RENDER_BEHIND = 1;
+  const RENDER_AHEAD = 3;
+  const KEEP_BEHIND = 4;
+  const KEEP_AHEAD = 8;
+
+  function renderPageWindow(center) {
+    if (settings.virtualize !== true || destroyed) return;
+    const page = Math.max(1, Math.min(totalPages, center || 1));
+    for (const record of pageRecords) {
+      if (record.number >= page - RENDER_BEHIND && record.number <= page + RENDER_AHEAD) {
+        renderPage(record);
+      } else if (record.number < page - KEEP_BEHIND || record.number > page + KEEP_AHEAD) {
+        unrenderPage(record);
+      }
+    }
+  }
+
+  function forEachBlock(blocks, fn) {
+    for (const block of blocks || []) {
+      fn(block);
+      if (block.type === "table") {
+        for (const row of block.rows) for (const cell of row.cells) forEachBlock(cell.blocks, fn);
+      }
+    }
+  }
+
+  function mapBlock(block, el) {
+    blockElements.set(block, el);
+    if (searchBlockSet.has(block)) el.addClass("ov-search-hit");
+  }
+
+  // The search index is the model's text, not the DOM, so it covers pages that
+  // are not rendered yet. A block maps to its element as soon as it is drawn.
+  function buildBlockIndex() {
+    textIndex = [];
+    for (const record of pageRecords) {
+      forEachBlock(record.blocks, (block) => {
+        if (block.type !== "p") return;
+        const text = plainText(block.runs).replace(/\s+/g, " ").trim();
+        if (!text) return;
+        textIndex.push({ block, page: record.number, text, lower: text.toLowerCase() });
+        if (block.bookmarks) {
+          for (const name of block.bookmarks) anchorBlocks.set(name, { block, page: record.number });
+        }
+        const props = resolveParagraphProps(block.style, block.props);
+        if (isHeading(props)) {
+          const name = "heading-" + headingNames.size;
+          headingNames.set(block, name);
+          anchorBlocks.set(name, { block, page: record.number });
+        }
+      });
+    }
+  }
+
+  function findRecordForBlock(block) {
+    for (const record of pageRecords) {
+      let found = false;
+      forEachBlock(record.blocks, (candidate) => {
+        if (candidate === block) found = true;
+      });
+      if (found) return record;
+    }
+    return null;
+  }
+
+  function createPage(placeholderHeight) {
     const page = doc.createElement("div");
     page.className = "ov-docx-page";
     page.style.width = pageWidthPx + "px";
-    page.style.minHeight = pageHeightPx + "px";
+    // A page that is not drawn yet still holds its planned height, so the
+    // scrollbar and the page number stay honest.
+    const planned = (placeholderHeight || 0) + twipToPx(marginTopTw) + twipToPx(marginBottomTw) + 4;
+    const minHeight = Math.max(pageHeightPx, planned);
+    page.style.minHeight = minHeight + "px";
     page.style.paddingTop = twipToPx(marginTopTw) + "px";
     page.style.paddingBottom = twipToPx(marginBottomTw) + "px";
     page.style.paddingLeft = twipToPx(marginLeftTw) + "px";
@@ -240,7 +374,7 @@ function createDocxRenderer(opts) {
     content.style.minHeight = Math.max(60, pageHeightPx - twipToPx(marginTopTw) - twipToPx(marginBottomTw)) + "px";
     const footer = page.createDiv("ov-docx-pagefooter");
     pagesEl.appendChild(page);
-    return { el: page, header, content, footer };
+    return { el: page, header, content, footer, minHeight };
   }
 
   function finalizePage(page, pageNumber, pageTotal, pageSection, firstOfSection) {
@@ -308,9 +442,6 @@ function createDocxRenderer(opts) {
       if (destroyed) return;
       if (block.type === "p") renderParagraph(block, parent);
       else if (block.type === "table") renderTable(block, parent, state);
-      if (block.bookmarks && block.bookmarks.length) {
-        for (const name of block.bookmarks) headingAnchors.set(name, parent.lastElementChild || parent);
-      }
     }
   }
 
@@ -340,11 +471,7 @@ function createDocxRenderer(opts) {
     // wrap it at the last tab, so the line is kept whole.
     if (ctx.tabStops.some((stop) => stop.pos > contentWidthPx)) el.style.whiteSpace = "nowrap";
     renderInline(block.runs, el, props, ctx);
-    if (isHeading(props) && block.runs.length) {
-      const text = plainText(block.runs);
-      if (text) headingAnchors.set("heading-" + headingAnchors.size, el);
-    }
-    registerText(el);
+    mapBlock(block, el);
   }
 
   // Word lays tabs out on explicit stops, or on the default half-inch grid. A
@@ -682,9 +809,12 @@ function createDocxRenderer(opts) {
     } else if (run.anchor) {
       wrap.addClass("ov-docx-image-float");
     }
-    if (run.url) {
+    // Media resolves when the picture is drawn, not when the document is
+    // parsed, so a package only pays for the pages a reader sees.
+    const url = run.url || (run.rid && model.mediaUrl ? model.mediaUrl(run.rid) : null);
+    if (url) {
       const img = wrap.createEl("img");
-      img.src = run.url;
+      img.src = url;
       img.alt = run.alt || run.name || "";
       img.loading = "lazy";
       if (width) img.style.width = "100%";
@@ -841,7 +971,7 @@ function createDocxRenderer(opts) {
       tbody.appendChild(tr);
     }
     parent.appendChild(table);
-    registerText(table);
+    mapBlock(block, table);
   }
 
   // Which tblStylePr entries apply to a row: the first and last row, and the
@@ -1038,7 +1168,8 @@ function createDocxRenderer(opts) {
         renderInline(block.runs, p, props, { listCounters: new Map() });
       }
     }
-    registerText(el);
+    const text = (el.textContent || "").replace(/\s+/g, " ").trim();
+    if (text) textIndex.push({ block: null, page: totalPages, text, lower: text.toLowerCase(), el });
   }
 
   function scrollToNote(kind, id) {
@@ -1047,15 +1178,61 @@ function createDocxRenderer(opts) {
   }
 
   function scrollToAnchor(name) {
-    const el = headingAnchors.get(name);
+    const target = anchorBlocks.get(name);
+    if (!target) return false;
+    const record = pageRecords[target.page - 1];
+    if (record && !record.rendered) renderPage(record);
+    const el = blockElements.get(target.block);
     if (el) el.scrollIntoView({ block: "start", behavior: "smooth" });
     return Boolean(el);
   }
 
-  // ---------- text index for search ----------
+  // ---------- search ----------
 
-  function registerText(el) {
-    textItems.push({ el, text: (el.textContent || "").replace(/\s+/g, " ").trim() });
+  function search(query) {
+    clearSearch();
+    const q = String(query || "").toLowerCase();
+    if (!q) return 0;
+    searchHits = [];
+    for (const item of textIndex) {
+      if (item.lower.indexOf(q) !== -1) searchHits.push(item);
+    }
+    searchBlockSet = new Set(searchHits.map((item) => item.block).filter(Boolean));
+    for (const item of searchHits) {
+      const el = item.el || blockElements.get(item.block);
+      if (el) el.addClass("ov-search-hit");
+    }
+    return searchHits.length;
+  }
+
+  function clearSearch() {
+    for (const item of searchHits) {
+      const el = item.el || blockElements.get(item.block);
+      if (el) el.removeClass("ov-search-hit");
+    }
+    if (searchCurrentEl) {
+      searchCurrentEl.removeClass("ov-search-current");
+      searchCurrentEl = null;
+    }
+    searchHits = [];
+    searchBlockSet = new Set();
+    searchIndex = -1;
+  }
+
+  function searchNext(dir) {
+    if (!searchHits.length) return null;
+    searchIndex = (searchIndex + dir + searchHits.length * 2) % searchHits.length;
+    const item = searchHits[searchIndex];
+    const record = pageRecords[item.page - 1];
+    if (record && !record.rendered) renderPage(record);
+    const el = item.el || blockElements.get(item.block);
+    if (searchCurrentEl) searchCurrentEl.removeClass("ov-search-current");
+    searchCurrentEl = el || null;
+    if (el) {
+      el.addClass("ov-search-current");
+      el.scrollIntoView({ block: "center", behavior: "smooth" });
+    }
+    return { index: searchIndex + 1, count: searchHits.length };
   }
 
   // ---------- equations ----------
@@ -1097,7 +1274,8 @@ function createDocxRenderer(opts) {
           const props = resolveParagraphProps(block.style, block.props);
           const text = plainText(block.runs).trim();
           if (text && isHeading(props)) {
-            outline.push({ text, level: Math.min(4, (props.outlineLevel || 0) + 1), anchor: block.bookmarks && block.bookmarks[0] });
+            const anchor = (block.bookmarks && block.bookmarks[0]) || headingNames.get(block) || undefined;
+            outline.push({ text, level: Math.min(4, (props.outlineLevel || 0) + 1), anchor });
           }
         } else if (block.type === "table") {
           for (const row of block.rows) for (const cell of row.cells) walk(cell.blocks, depth + 1);
@@ -1109,44 +1287,6 @@ function createDocxRenderer(opts) {
   }
 
   // ---------- search ----------
-
-  let searchState = { hits: [], index: -1 };
-
-  function search(query) {
-    clearSearch();
-    const q = String(query || "").toLowerCase();
-    if (!q) return 0;
-    let count = 0;
-    for (const item of textItems) {
-      if ((item.text || "").toLowerCase().indexOf(q) !== -1) {
-        item.el.addClass("ov-search-hit");
-        count++;
-      }
-    }
-    return count;
-  }
-
-  function clearSearch() {
-    for (const item of textItems) {
-      item.el.removeClass("ov-search-hit");
-      item.el.removeClass("ov-search-current");
-    }
-    searchState = { hits: [], index: -1 };
-  }
-
-  function searchNext(dir) {
-    const hits = [];
-    for (const item of textItems) {
-      if (item.el.hasClass("ov-search-hit")) hits.push(item.el);
-    }
-    if (!hits.length) return null;
-    searchState.index = (searchState.index + dir + hits.length * 2) % hits.length;
-    for (const el of hits) el.removeClass("ov-search-current");
-    const el = hits[searchState.index];
-    el.addClass("ov-search-current");
-    el.scrollIntoView({ block: "center", behavior: "smooth" });
-    return { index: searchState.index + 1, count: hits.length };
-  }
 
   function ptToPxLocal(pt) {
     return Math.round(pt * 96) / 72;
@@ -1247,8 +1387,10 @@ function createDocxRenderer(opts) {
     let current = [];
     let used = 0;
     const metricsCache = new Map();
+    // Each page keeps the height its blocks need, so a page that is not
+    // rendered yet can hold the scroll position with a placeholder.
     const nextPage = () => {
-      pages.push(current);
+      pages.push({ blocks: current, height: used });
       current = [];
       used = 0;
     };
@@ -1322,7 +1464,14 @@ function createDocxRenderer(opts) {
   function observePage() {
     if (!scrollEl || !scrollEl.addEventListener) return;
     scrollEl.addEventListener("scroll", onScroll, { passive: true });
-    reportCurrentPage();
+    // The first report measures every page. In windowed mode that is deferred
+    // to the next frame so the mount still paints immediately.
+    if (settings.virtualize === true) {
+      const raf = typeof requestAnimationFrame === "function" ? requestAnimationFrame : (cb) => setTimeout(cb, 16);
+      raf(() => reportCurrentPage());
+    } else {
+      reportCurrentPage();
+    }
   }
 
   let scrollPending = false;
@@ -1338,6 +1487,7 @@ function createDocxRenderer(opts) {
 
   function pagesInOrder() {
     const out = [];
+    if (!pagesEl) return out;
     for (const el of pagesEl.children) {
       if (el.classList && el.classList.contains("ov-docx-page")) out.push(el);
     }
@@ -1357,12 +1507,15 @@ function createDocxRenderer(opts) {
   }
 
   function reportCurrentPage() {
+    if (destroyed || !pagesEl) return;
     const count = pagesInOrder().length;
     if (!count) return;
     const page = currentPageNumber();
-    if (page === lastReportedPage && lastReportedPage !== 0) return;
-    lastReportedPage = page;
-    callbacks.onPageChange({ page, count });
+    if (page !== lastReportedPage || lastReportedPage === 0) {
+      lastReportedPage = page;
+      callbacks.onPageChange({ page, count });
+    }
+    renderPageWindow(page);
   }
 
   function setSettings(patch) {
@@ -1383,8 +1536,14 @@ function createDocxRenderer(opts) {
     destroyed = true;
     if (container) container.textContent = "";
     rootEl = scrollEl = pagesEl = null;
-    textItems.length = 0;
-    headingAnchors.clear();
+    pageRecords = [];
+    blockElements.clear();
+    anchorBlocks.clear();
+    headingNames.clear();
+    textIndex = [];
+    searchHits = [];
+    searchBlockSet = new Set();
+    searchCurrentEl = null;
   }
 
   function cssEscape(value) {
