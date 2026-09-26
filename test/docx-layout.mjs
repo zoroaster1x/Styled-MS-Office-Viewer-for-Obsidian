@@ -170,6 +170,51 @@ const fieldMarkers = Array.from(fieldHost.querySelectorAll(".ov-docx-field")).ma
 check("a PAGE field shows the live number", fieldMarkers === "1", JSON.stringify(fieldMarkers));
 check("the saved field result is dropped", !fieldText.includes("53"), fieldText);
 
+// A right tab stop aligns the content that follows it: the logo paragraph on a
+// cover page is one tab run and an image, and the image's right edge must land
+// on the stop (which can overflow the text width, as Word allows).
+const tabBlock = {
+  type: "p",
+  props: { tabs: [{ posTw: 9000, align: "right", leader: "none" }] },
+  style: null,
+  markRunProps: {},
+  runs: [
+    { type: "tab" },
+    { type: "image", url: "data:image/png;base64,AA", widthPx: 100, heightPx: 40, anchor: null },
+  ],
+};
+const tabModel = Object.assign({}, model, { body: [tabBlock] });
+const tabHost = createContainer();
+createDocxRenderer({ container: tabHost, model: tabModel, settings: {} });
+const tabBox = tabHost.querySelector(".ov-docx-tabbox");
+check("a right tab makes an atomic alignment box", Boolean(tabBox), tabBox && tabBox.className);
+check("the tab box spans to the stop", tabBox && tabBox.style.width === "600px", tabBox && tabBox.style.width);
+check("the tab box right aligns", tabBox && tabBox.style.textAlign === "right", tabBox && tabBox.style.textAlign);
+check("the tab content is inside the box", tabBox && Boolean(tabBox.querySelector("img")));
+
+// An out-of-flow wp:anchor (wrapNone) is positioned from its offsets and takes
+// no room in the line: the nose-bridge trapezoid and every floating callout.
+const anchorBlock = {
+  type: "p",
+  props: {},
+  style: null,
+  markRunProps: {},
+  runs: [
+    {
+      type: "image", url: "data:image/png;base64,AA", widthPx: 96, heightPx: 128,
+      anchor: { h: { from: "column", offset: 914400, align: null }, v: { from: "paragraph", offset: 457200, align: null }, behindDoc: false, wrap: "wrapNone", outOfFlow: true },
+    },
+  ],
+};
+const anchorModel = Object.assign({}, model, { body: [anchorBlock] });
+const anchorHost = createContainer();
+createDocxRenderer({ container: anchorHost, model: anchorModel, settings: {} });
+const anchored = anchorHost.querySelector(".ov-docx-anchor");
+check("an out-of-flow anchor is absolute", anchored && anchored.style.position === "absolute", anchored && anchored.style.position);
+check("the anchor uses its horizontal offset", anchored && anchored.style.left === "96px", anchored && anchored.style.left);
+check("the anchor uses its vertical offset", anchored && anchored.style.top === "48px", anchored && anchored.style.top);
+check("the anchor paragraph is the positioning context", Boolean(anchorHost.querySelector(".ov-docx-p.ov-has-anchor")));
+
 console.log("");
 console.log("docx-layout:", pass, "pass,", fail, "fail");
 process.exit(fail ? 1 : 0);

@@ -698,6 +698,44 @@
   margin: 0 10px 6px 0;
 }
 
+/* An out-of-flow drawing (wp:anchor with wrapNone) is placed from its own
+   offsets. Its paragraph becomes the positioning context. */
+.ov-docx-p.ov-has-anchor {
+  position: relative;
+}
+
+.ov-docx-anchor {
+  position: absolute;
+}
+
+.ov-docx-tabstop {
+  display: inline-block;
+  height: 1em;
+  vertical-align: baseline;
+}
+
+/* The content a right or centre tab aligns. Atomic, so a tab stop past the
+   text width overflows the margin instead of wrapping. */
+.ov-docx-tabbox {
+  display: inline-block;
+  vertical-align: baseline;
+  white-space: pre-wrap;
+  line-height: inherit;
+}
+
+.ov-docx-tabstop.is-leader {
+  border-bottom: 1px dotted currentColor;
+  transform: translateY(-0.25em);
+}
+
+.ov-docx-tabstop.is-leader[data-leader="underscore"] {
+  border-bottom-style: solid;
+}
+
+.ov-docx-tabstop.is-leader[data-leader="hyphen"] {
+  border-bottom-style: dashed;
+}
+
 /* A Word drawing group. One inline box at the wp:extent size, children placed
    absolutely by their own transforms in document order. */
 .ov-docx-shapegroup {
