@@ -764,6 +764,30 @@
   display: block;
 }
 
+/* A legacy VML drawing: the wrapper holds absolutely placed child shapes from
+   the file's own coordinates, text and pictures included. */
+.ov-docx-vml {
+  display: inline-block;
+  position: relative;
+  vertical-align: bottom;
+  max-width: 100%;
+  line-height: 1;
+}
+
+.ov-docx-vml-group {
+  overflow: visible;
+}
+
+.ov-docx-vml-text {
+  position: absolute;
+  left: 0;
+  top: 0;
+  right: 0;
+  bottom: 0;
+  overflow: visible;
+  line-height: 1.2;
+}
+
 .ov-docx-shape .ov-docx-p {
   margin: 0;
   white-space: pre-wrap;
@@ -801,6 +825,10 @@
 
 .ov-docx-table-header td {
   font-weight: 600;
+}
+
+.ov-docx-table-strong td {
+  font-weight: 700;
 }
 
 .ov-docx-link {

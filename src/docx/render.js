@@ -29,6 +29,7 @@ const { tagName } = require("../shared/xml");
 const { mathText } = require("./math");
 const { renderMathDom } = require("../shared/math-dom");
 const { renderShapeGroup: drawShapeGroup, applyAnchorStyles } = require("./drawing");
+const { renderVml } = require("./vml");
 
 const DEFAULT_FONT_PT = 11;
 const DEFAULT_PAGE_WIDTH_TW = 11906;
@@ -207,11 +208,17 @@ function createDocxRenderer(opts) {
 
     const pages = planPages(model.body);
     totalPages = pages.length;
+    let previousSection = -1;
     pages.forEach((blocks, index) => {
       currentPage = index + 1;
+      const sectionIndex = blocks.length && blocks[0].section != null ? blocks[0].section : 0;
+      const pageSection = (model.sectionList && model.sectionList[sectionIndex]) || section;
+      const firstOfSection = sectionIndex !== previousSection;
+      previousSection = sectionIndex;
       const page = createPage();
+      page.el.dataset.section = String(sectionIndex);
       renderBlocks(blocks, page.content, { state: { page, flow: page.content, usedHeight: 0 }, ctx: { listCounters: new Map(), pageCount: currentPage } });
-      finalizePage(page, currentPage, totalPages);
+      finalizePage(page, currentPage, totalPages, pageSection, firstOfSection);
     });
     currentPage = 1;
     renderNotes();
@@ -236,9 +243,9 @@ function createDocxRenderer(opts) {
     return { el: page, header, content, footer };
   }
 
-  function finalizePage(page, pageNumber, pageTotal) {
-    if (settings.showHeaders) renderHeaderFooter(page.header, "header", pageNumber, pageTotal);
-    const hasFooter = renderHeaderFooter(page.footer, "footer", pageNumber, pageTotal);
+  function finalizePage(page, pageNumber, pageTotal, pageSection, firstOfSection) {
+    if (settings.showHeaders) renderHeaderFooter(page.header, "header", pageNumber, pageTotal, pageSection, firstOfSection);
+    const hasFooter = renderHeaderFooter(page.footer, "footer", pageNumber, pageTotal, pageSection, firstOfSection);
     // Documents often carry no footer at all. A quiet marker in the bottom
     // margin tells the reader which sheet they are on, the way a PDF viewer
     // does, without pretending the document printed it.
@@ -249,14 +256,22 @@ function createDocxRenderer(opts) {
   }
 
   // Returns true when the part had content of its own.
-  function renderHeaderFooter(el, kind, pageNumber, pageTotal) {
+  function renderHeaderFooter(el, kind, pageNumber, pageTotal, pageSection, firstOfSection) {
     if (!settings.showHeaders && kind === "header") {
       el.addClass("is-hidden");
       return false;
     }
-    const refs = kind === "header" ? section.headerRefs : section.footerRefs;
+    const refs = kind === "header" ? pageSection.headerRefs : pageSection.footerRefs;
     if (!refs) return false;
-    const rid = refs.default || refs.first || Object.values(refs)[0];
+    const evenOdd = Boolean(model.settings && model.settings.evenAndOddHeaders);
+    const even = evenOdd && pageNumber % 2 === 0;
+    let rid = null;
+    if (firstOfSection && pageSection.titlePage) {
+      // A title page shows the first-page part only when the file has one.
+      rid = refs.first || null;
+    } else {
+      rid = (even ? refs.even : null) || refs.default || refs.first || Object.values(refs)[0];
+    }
     if (!rid) return false;
     const part = (kind === "header" ? model.headers : model.footers).get(rid);
     if (!part) return false;
@@ -439,6 +454,9 @@ function createDocxRenderer(opts) {
         ctx.cursor += flowWidth(run);
       } else if (run.type === "shapegroup") {
         renderShapeGroup(parent, run);
+        ctx.cursor += flowWidth(run);
+      } else if (run.type === "vml") {
+        renderVmlShape(parent, run);
         ctx.cursor += flowWidth(run);
       } else if (run.type === "math") {
         renderMath(run.node, parent, paraProps);
@@ -693,6 +711,20 @@ function createDocxRenderer(opts) {
     });
   }
 
+  // A legacy VML drawing (w:pict). Coordinates and style are read by the vml
+  // module; paragraphs keep the document style cascade.
+  function renderVmlShape(parent, run) {
+    renderVml(parent, run, {
+      theme: model.theme,
+      contentWidthPx,
+      pageMarginLeftPx: twipToPx(marginLeftTw),
+      pageMarginTopPx: twipToPx(marginTopTw),
+      mediaUrl: (rid) => model.mediaUrl(rid),
+      parseParagraph: (el) => require("./parse").parseParagraph(el, model, { listCounters: new Map() }),
+      drawParagraph: (block, host) => renderParagraph(block, host),
+    });
+  }
+
   // A text box from a shape: its own runs, drawn where the shape is anchored.
   function renderTextBox(parent, run, paraProps) {
     const box = parent.createDiv("ov-docx-textbox");
@@ -735,6 +767,15 @@ function createDocxRenderer(opts) {
 
   function renderTable(block, parent, state) {
     const props = block.props || {};
+    // A table style carries the base borders, cell margins and the conditional
+    // formatting (banded rows, a bold first row) the file relies on.
+    const tableStyle = block.styleId ? model.styles.table.get(block.styleId) : null;
+    const styleProps = tableStyle && tableStyle.tblPr ? tableStyle.tblPr : null;
+    const baseBorders = props.borders || (styleProps && styleProps.borders) || null;
+    const baseMargin = props.cellMargin || (styleProps && styleProps.cellMargin) || null;
+    const look = props.look || (styleProps && styleProps.look) || {};
+    const conditionals = styleProps && tableStyle.conditionals ? tableStyle.conditionals : [];
+
     const table = parent.createEl("table", { cls: "ov-docx-table" });
     if (props.align === "center") table.style.marginLeft = "auto", table.style.marginRight = "auto";
     else if (props.align === "right") table.style.marginLeft = "auto";
@@ -766,26 +807,85 @@ function createDocxRenderer(opts) {
       table.appendChild(colgroup);
     }
 
+    const rowCount = block.rows.length;
     const tbody = doc.createElement("tbody");
     table.appendChild(tbody);
-    for (let r = 0; r < block.rows.length; r++) {
+    for (let r = 0; r < rowCount; r++) {
       const row = block.rows[r];
       const tr = doc.createElement("tr");
       if (row.props && row.props.heightTw) {
         tr.style.height = twipToPx(row.props.heightTw) + "px";
       }
       if (row.props && row.props.header) tr.addClass("ov-docx-table-header");
+      const rowConditionals = conditionalsForRow(conditionals, r, rowCount, look);
+      if (rowConditionals.some((entry) => entry.type === "firstRow" || entry.rPr && entry.rPr.bold)) {
+        tr.addClass("ov-docx-table-strong");
+      }
+      let column = 0;
       for (const cell of row.cells) {
+        const span = cell.gridSpan || 1;
         // A vMerge continuation is covered by the restart cell's rowspan above.
         // Emitting it as well would shift every following cell one column right
         // and split the row.
-        if (cell.vMerge === "continue") continue;
-        renderCell(tr, cell, block, r, Boolean(grid));
+        if (cell.vMerge === "continue") {
+          column += span;
+          continue;
+        }
+        renderCell(tr, cell, block, r, Boolean(grid), {
+          baseBorders,
+          baseMargin,
+          conditionals: conditionalsForCell(rowConditionals, conditionals, column, colCount, look),
+        });
+        column += span;
       }
       tbody.appendChild(tr);
     }
     parent.appendChild(table);
     registerText(table);
+  }
+
+  // Which tblStylePr entries apply to a row: the first and last row, and the
+  // horizontal bands. Bands alternate over the data rows, which is where the
+  // first and last rows are excluded when the look says so.
+  function conditionalsForRow(conditionals, rowIndex, rowCount, look) {
+    const out = [];
+    const has = (type) => conditionals.find((entry) => entry.type === type);
+    const first = look.firstRow !== false && rowIndex === 0;
+    const last = look.lastRow !== false && rowIndex === rowCount - 1;
+    if (first) {
+      const entry = has("firstRow");
+      if (entry) out.push(entry);
+    }
+    if (last) {
+      const entry = has("lastRow");
+      if (entry) out.push(entry);
+    }
+    if (look.noHBand !== true) {
+      const bandIndex = first ? -1 : rowIndex - (look.firstRow === false ? 0 : 1);
+      if (!last && bandIndex >= 0) {
+        const entry = has(bandIndex % 2 === 0 ? "band1Horz" : "band2Horz");
+        if (entry) out.push(entry);
+      }
+    }
+    return out;
+  }
+
+  function conditionalsForCell(rowConditionals, conditionals, column, colCount, look) {
+    const out = rowConditionals.slice();
+    const has = (type) => conditionals.find((entry) => entry.type === type);
+    if (look.firstColumn !== false && column === 0) {
+      const entry = has("firstCol");
+      if (entry) out.push(entry);
+    }
+    if (look.lastColumn !== false && column === colCount - 1) {
+      const entry = has("lastCol");
+      if (entry) out.push(entry);
+    }
+    if (look.noVBand !== true) {
+      const entry = has(column % 2 === 0 ? "band1Vert" : "band2Vert");
+      if (entry) out.push(entry);
+    }
+    return out;
   }
 
   function computeColumnCount(block, grid) {
@@ -799,8 +899,10 @@ function createDocxRenderer(opts) {
     return max || 1;
   }
 
-  function renderCell(tr, cell, block, rowIndex, hasGrid) {
+  function renderCell(tr, cell, block, rowIndex, hasGrid, table) {
     const props = cell.props || {};
+    const context = table || {};
+    const conditional = pickConditional(context.conditionals);
     const td = doc.createElement("td");
     // Attributes, not properties: a host that does not reflect colSpan onto the
     // attribute drops the span out of any serialised HTML.
@@ -810,13 +912,17 @@ function createDocxRenderer(opts) {
     // The colgroup owns the widths when there is a grid; a cell width on top of
     // it can make Chrome widen the table past the declared size.
     if (!hasGrid && props.widthTw) td.style.width = twipToPx(props.widthTw) + "px";
-    if (props.vAlign) td.style.verticalAlign = props.vAlign === "center" ? "middle" : props.vAlign;
-    if (props.shading && props.shading.color) td.style.backgroundColor = props.shading.color;
-    const tableBorders = block.props && block.props.borders ? block.props.borders : null;
-    const borders = mergeBorders(tableBorders, props.borders);
-    applyCellBorders(td, borders);
-    const tableMargin = block.props && block.props.cellMargin ? block.props.cellMargin : null;
-    const cellMargin = props.margin || null;
+    const vAlign = props.vAlign || (conditional && conditional.tcPr && conditional.tcPr.vAlign);
+    if (vAlign) td.style.verticalAlign = vAlign === "center" ? "middle" : vAlign;
+    const shading = props.shading || (conditional && conditional.tcPr && conditional.tcPr.shading);
+    if (shading && shading.color) td.style.backgroundColor = shading.color;
+    // Direct cell borders win over the conditional style, which wins over the
+    // table's own borders and the table style's base.
+    const conditionalBorders = conditional && conditional.tcPr ? conditional.tcPr.borders : null;
+    const merged = mergeBorders(context.baseBorders || null, props.borders || null);
+    applyCellBorders(td, mergeBorders(merged, conditionalBorders));
+    const tableMargin = context.baseMargin || null;
+    const cellMargin = props.margin || (conditional && conditional.tcPr && conditional.tcPr.margin) || null;
     if (tableMargin || cellMargin) {
       // The table's tblCellMar is the default for every cell; tcMar overrides
       // it per side. Without this a cell that states zero margins still gets
@@ -831,6 +937,13 @@ function createDocxRenderer(opts) {
     const cellState = { state: null, ctx: { listCounters: new Map() } };
     renderBlocks(cell.blocks, td, cellState);
     tr.appendChild(td);
+  }
+
+  // Word applies conditionals in a fixed order; the last entry that states a
+  // property is the one that holds.
+  function pickConditional(conditionals) {
+    if (!conditionals || !conditionals.length) return null;
+    return conditionals[conditionals.length - 1];
   }
 
   function continuationRowspan(block, rowIndex, cell) {
@@ -967,7 +1080,7 @@ function createDocxRenderer(opts) {
         else if (run.type === "run") walk(run.runs);
         else if (run.type === "link") walk(run.link.runs);
         else if (run.type === "tab") out += "\t";
-        else if (run.type === "shapegroup" && run.texts) out += run.texts.join(" ") + " ";
+        else if ((run.type === "shapegroup" || run.type === "vml") && run.texts) out += run.texts.join(" ") + " ";
       }
     };
     walk(runs);
@@ -1083,8 +1196,9 @@ function createDocxRenderer(opts) {
       const blocks = run.type === "run" ? run.runs : [run];
       for (const inner of blocks || []) {
         if (!inner) continue;
-        if (inner.type === "image" || inner.type === "textbox" || inner.type === "shapegroup") {
-          const imageHeight = Number(inner.heightPx) > 0 ? Number(inner.heightPx) : 0;
+        if (inner.type === "image" || inner.type === "textbox" || inner.type === "shapegroup" || inner.type === "vml") {
+          const top = (inner.offsetPx && inner.offsetPx.top) || 0;
+          const imageHeight = Number(inner.heightPx) > 0 ? Number(inner.heightPx) + top : 0;
           const imageLines = Number(inner.heightPx) > 0 ? Math.ceil(imageHeight / Math.max(1, linePx)) : 0;
           contentHeight = Math.max(contentHeight, imageHeight + 4, imageLines * linePx);
         }
@@ -1132,19 +1246,57 @@ function createDocxRenderer(opts) {
     const pages = [];
     let current = [];
     let used = 0;
+    const metricsCache = new Map();
     const nextPage = () => {
       pages.push(current);
       current = [];
       used = 0;
     };
-    for (const block of blocks) {
-      const metrics = estimateBlock(block);
+    const blockMetrics = (block) => {
+      let metrics = metricsCache.get(block);
+      if (!metrics) {
+        metrics = estimateBlock(block);
+        metricsCache.set(block, metrics);
+      }
+      return metrics;
+    };
+    const blockTotal = (block) => {
+      const metrics = blockMetrics(block);
+      return metrics.before + metrics.height + metrics.after;
+    };
+    const headingBlock = (block) => {
+      if (!block || block.type !== "p") return false;
+      return isHeading(resolveParagraphProps(block.style, block.props));
+    };
+    for (let i = 0; i < blocks.length; i++) {
+      const block = blocks[i];
+      const metrics = blockMetrics(block);
       const total = metrics.before + metrics.height + metrics.after;
       const forced = block.props && block.props.pageBreakBefore;
+      const nextTotal = blocks[i + 1] ? blockTotal(blocks[i + 1]) : 0;
       if (forced && (current.length || used > 0)) nextPage();
-      if (used > 0 && used + total > contentHeightPx) nextPage();
+      // keepNext: this block must share its page with the one after it.
+      if (block.props && block.props.keepNext && current.length
+        && used + total + nextTotal > contentHeightPx && used + total <= contentHeightPx) {
+        nextPage();
+      }
+      if (used > 0 && used + total > contentHeightPx) {
+        // A heading directly before a table travels with the table, which is
+        // what Word and the reference renderers do with a form's title.
+        const last = current.length ? current[current.length - 1] : null;
+        if (block.type === "table" && headingBlock(last)) {
+          current.pop();
+          used -= blockTotal(last);
+          nextPage();
+          current.push(last);
+          used += blockTotal(last);
+        } else {
+          nextPage();
+        }
+      }
       current.push(block);
       used += total;
+      if (block.pageBreakAfter) nextPage();
     }
     if (current.length || pages.length === 0) nextPage();
     return pages;

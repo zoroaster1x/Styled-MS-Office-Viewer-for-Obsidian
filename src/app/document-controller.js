@@ -294,6 +294,7 @@ function plainText(runs) {
     else if (run.type === "run") out += plainText(run.runs);
     else if (run.type === "link") out += plainText(run.link.runs);
     else if (run.type === "shapegroup" && run.texts) out += run.texts.join(" ") + " ";
+    else if (run.type === "vml" && run.texts) out += run.texts.join(" ") + " ";
   }
   return out;
 }

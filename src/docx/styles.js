@@ -83,6 +83,16 @@ function parseStyles(doc, theme) {
     if (rPrEl) entry.rPr = parseRunProps(rPrEl, theme);
     const tblPrEl = firstOf(el, "tblPr");
     if (tblPrEl) entry.tblPr = parseTableProps(tblPrEl, theme);
+    entry.conditionals = [];
+    for (const cs of childrenOf(el, "tblStylePr")) {
+      entry.conditionals.push({
+        type: attr(cs, "type") || "",
+        pPr: parseParaProps(firstOf(cs, "pPr"), theme),
+        rPr: parseRunProps(firstOf(cs, "rPr"), theme),
+        tblPr: parseTableProps(firstOf(cs, "tblPr"), theme),
+        tcPr: parseCellProps(firstOf(cs, "tcPr"), theme),
+      });
+    }
     if (type === "paragraph") styles.paragraph.set(id, entry);
     else if (type === "character") styles.character.set(id, entry);
     else if (type === "table") styles.table.set(id, entry);
