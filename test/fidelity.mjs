@@ -194,6 +194,12 @@ function collectRunText(run, out) {
       const trimmed = String(text).trim();
       if (trimmed) out.push(trimmed);
     }
+  } else if (run.type === "vml" && run.texts) {
+    // VML text boxes carry content as well.
+    for (const text of run.texts) {
+      const trimmed = String(text).trim();
+      if (trimmed) out.push(trimmed);
+    }
   }
 }
 

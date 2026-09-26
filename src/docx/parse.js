@@ -26,10 +26,11 @@
 
 const { Package, relTypeIs } = require("../shared/package");
 const {
-  childrenOf, firstOf, lastOf, findAll, attr, attrInt, attrBool, attrNs, flag, tagName,
+  childrenOf, firstOf, lastOf, findAll, findFirst, attr, attrInt, attrBool, attrNs, flag, tagName,
 } = require("../shared/xml");
 const { createMediaCache, mediaUrl } = require("../media/media");
 const { parseMath } = require("./math");
+const { parseVmlRun } = require("./vml");
 const styles = require("./styles");
 
 function parseDocx(input) {
@@ -81,9 +82,21 @@ function parseDocx(input) {
 
   const body = firstOf(documentXml.documentElement, "body");
   if (!body) throw new Error("The document body is missing.");
-  model.body = parseBlockChildren(body, model, { listCounters: new Map() });
+  const bodyCtx = { listCounters: new Map(), sectionIndex: 0, sections: [] };
+  model.body = parseBlockChildren(body, model, bodyCtx);
   model.section = parseFinalSection(body, model);
+  // Section properties in document order: the sectPr ending each section, then
+  // the body's own final sectPr. A header or footer reference is per section.
+  model.sectionList = bodyCtx.sections;
+  model.sectionList[bodyCtx.sections.length] = model.section;
   model.sections = countSections(body);
+  // settings.xml says whether even and odd pages carry different headers and
+  // footers. Without it every page uses the default part, which is what Word
+  // does, even when the section lists an even part.
+  const settingsDoc = pkg.xml("word/settings.xml");
+  model.settings = {
+    evenAndOddHeaders: settingsDoc ? Boolean(findFirst(settingsDoc.documentElement, "evenAndOddHeaders")) : false,
+  };
   model.properties = parseCoreProperties(pkg.xml("docProps/core.xml"), pkg.xml("docProps/app.xml"));
   return model;
 }
@@ -145,9 +158,23 @@ function parseBlockChildren(parent, model, ctx, depth) {
   for (const el of parent.children || []) {
     if (counted++ > 50000) break;
     const tag = tagName(el);
-    if (tag === "p") out.push(parseParagraph(el, model, ctx));
-    else if (tag === "tbl") out.push(parseTable(el, model, ctx, level));
-    else if (tag === "sdt") {
+    if (tag === "p") {
+      const parsed = parseParagraph(el, model, ctx);
+      // Content up to and including a paragraph that carries a sectPr belongs
+      // to that section; the sections after it get the next index.
+      for (const block of splitAtPageBreaks(parsed)) {
+        block.section = ctx.sectionIndex || 0;
+        out.push(block);
+      }
+      if (parsed.sectionBreak && ctx.sections) {
+        ctx.sections[ctx.sectionIndex || 0] = parsed.sectionBreak;
+        ctx.sectionIndex = (ctx.sectionIndex || 0) + 1;
+      }
+    } else if (tag === "tbl") {
+      const table = parseTable(el, model, ctx, level);
+      table.section = ctx.sectionIndex || 0;
+      out.push(table);
+    } else if (tag === "sdt") {
       const content = firstOf(el, "sdtContent");
       if (content) out.push(...parseBlockChildren(content, model, ctx, level));
     } else if (tag === "sectPr") {
@@ -157,6 +184,47 @@ function parseBlockChildren(parent, model, ctx, depth) {
     }
   }
   return out;
+}
+
+// A page break in the middle of a paragraph (or, as Word usually writes it, in
+// a paragraph of its own) ends the page there. The block is split so the page
+// planner can honour both halves.
+function splitAtPageBreaks(block) {
+  if (!block || block.type !== "p" || !block.runs || !block.runs.length) return [block];
+  if (!block.runs.some((run) => containsPageBreak(run))) return [block];
+  const out = [];
+  let current = [];
+  const flush = (breakAfter) => {
+    out.push(Object.assign({}, block, { runs: current, pageBreakAfter: breakAfter }));
+    current = [];
+  };
+  for (const run of block.runs) {
+    if (isPageBreak(run)) {
+      flush(true);
+      continue;
+    }
+    if (containsPageBreak(run)) {
+      for (const inner of run.runs || []) {
+        if (isPageBreak(inner)) flush(true);
+        else current.push(inner);
+      }
+      continue;
+    }
+    current.push(run);
+  }
+  if (current.length || !out.length) flush(false);
+  return out;
+}
+
+function isPageBreak(run) {
+  return Boolean(run && run.type === "break" && run.page);
+}
+
+function containsPageBreak(run) {
+  if (!run) return false;
+  if (isPageBreak(run)) return true;
+  if (run.type === "run") return (run.runs || []).some(containsPageBreak);
+  return false;
 }
 
 function parseParagraph(el, model, ctx) {
@@ -179,7 +247,8 @@ function parseParagraph(el, model, ctx) {
     if (pPr.numId != null && model.numbering && model.numbering.numIdToAbstract.size) {
       para.numbering = resolveNumbering(pPr.numId, pPr.ilvl || 0, model, ctx);
     }
-    if (pPr.sectPr) para.sectionBreak = pPr.sectPr;
+    const sectPrEl = firstOf(pPrEl, "sectPr");
+    if (sectPrEl) para.sectionBreak = styles.parseSectionProps(sectPrEl, model.theme);
   }
 
   // Runs, hyperlinks, bookmarks, fields and drawings in document order.
@@ -204,36 +273,43 @@ function parseParagraph(el, model, ctx) {
       const name = attr(child, "name");
       if (name && !name.startsWith("_")) para.bookmarks.push(name);
     } else if (tag === "sdt") {
-      const content = firstOf(child, "sdtContent");
-      if (content) {
-        for (const inner of content.children || []) {
-          if (tagName(inner) === "oMath" || tagName(inner) === "oMathPara") {
-            const node = parseMath(inner);
-            if (node) para.runs.push({ type: "math", node });
-          } else if (tagName(inner) === "r") parseRunInto(para.runs, inner, model, ctx, null);
-          else if (tagName(inner) === "hyperlink") {
-            const rid = attr(inner, "id") || attrNs(inner, "id");
-            const target = rid ? resolveHyperlink(model, rid) : null;
-            const link = { href: target ? target.href : null, anchor: attr(inner, "anchor"), runs: [] };
-            for (const r of childrenOf(inner, "r")) parseRunInto(link.runs, r, model, ctx, null);
-            para.runs.push({ type: "link", link });
-          }
-        }
-      }
+      // Content controls nest, and a page number inside one is still content.
+      parseInlineContainer(child, para.runs, model, ctx);
     } else if (tag === "fldSimple") {
       const instr = attr(child, "instr") || "";
       const isPage = /PAGE/.test(instr) && !/NUMPAGES/.test(instr);
       const runs = [];
       for (const r of childrenOf(child, "r")) parseRunInto(runs, r, model, ctx, null);
       para.runs.push({ type: "field", kind: isPage ? "page" : /NUMPAGES/.test(instr) ? "pages" : "field", runs });
-    } else if (tag === "smartTag" || tag === "ins") {
-      for (const inner of child.children || []) {
-        if (tagName(inner) === "r") parseRunInto(para.runs, inner, model, ctx, null);
-      }
+    } else if (tag === "smartTag" || tag === "ins" || tag === "sdt") {
+      // These wrappers nest freely around runs and other inline content, so
+      // the walk has to recurse: a w:r two levels down still holds text.
+      parseInlineContainer(child, para.runs, model, ctx);
     }
   }
   void hyperlink;
   return para;
+}
+
+// Walks an inline wrapper (smartTag, ins, sdt) for the content it carries.
+function parseInlineContainer(el, list, model, ctx) {
+  for (const child of el.children || []) {
+    const tag = tagName(child);
+    if (tag === "r") {
+      parseRunInto(list, child, model, ctx, null);
+    } else if (tag === "smartTag" || tag === "ins" || tag === "sdt" || tag === "sdtContent") {
+      parseInlineContainer(child, list, model, ctx);
+    } else if (tag === "hyperlink") {
+      const rid = attr(child, "id") || attrNs(child, "id");
+      const target = rid ? resolveHyperlink(model, rid) : null;
+      const link = { href: target ? target.href : null, anchor: attr(child, "anchor"), runs: [] };
+      for (const r of childrenOf(child, "r")) parseRunInto(link.runs, r, model, ctx, null);
+      list.push({ type: "link", link });
+    } else if (tag === "oMath" || tag === "oMathPara") {
+      const node = parseMath(child);
+      if (node) list.push({ type: "math", node });
+    }
+  }
 }
 
 function resolveHyperlink(model, rid) {
@@ -264,13 +340,16 @@ function parseRun(el, model, ctx) {
     } else if (tag === "delText") {
       runs.push({ type: "text", text: child.textContent || "", props: rPr, deleted: true });
     } else if (tag === "br") {
-      runs.push({ type: "break" });
+      const kind = attr(child, "type");
+      if (kind === "page") runs.push({ type: "break", page: true });
+      else if (kind === "column") runs.push({ type: "break", column: true });
+      else runs.push({ type: "break" });
     } else if (tag === "cr") {
       runs.push({ type: "break" });
     } else if (tag === "tab") {
       runs.push({ type: "tab" });
     } else if (tag === "sym") {
-      runs.push({ type: "text", text: symbolFromChar(attr(child, "char")), props: rPr });
+      runs.push({ type: "text", text: symbolFromChar(attr(child, "char"), attr(child, "font")), props: rPr });
     } else if (tag === "noBreakHyphen") {
       runs.push({ type: "text", text: "\u2011", props: rPr });
     } else if (tag === "softHyphen") {
@@ -279,8 +358,14 @@ function parseRun(el, model, ctx) {
       const drawing = parseDrawing(child, model, ctx);
       if (drawing) runs.push(drawing);
     } else if (tag === "pict" || tag === "object") {
-      const picture = parseLegacyPicture(child, model, ctx);
-      if (picture) runs.push(picture);
+      const vml = parseVmlRun(child);
+      if (vml) {
+        runs.push(vml);
+      } else {
+        const picture = parseLegacyPicture(child, model, ctx);
+        if (picture) runs.push(picture);
+        else runs.push({ type: "placeholder", kind: "object", label: "Embedded object" });
+      }
     } else if (tag === "fldChar") {
       const type = attr(child, "fldCharType");
       runs.push({ type: "fieldChar", stage: type });
@@ -323,10 +408,82 @@ function parseRun(el, model, ctx) {
   return { type: "run", runs, props: rPr, isLink: false };
 }
 
-function symbolFromChar(char) {
+// w:sym addresses a glyph in a legacy symbol font by a private-use code point:
+// F0xx is the old byte xx in that font's encoding. Passing the code point
+// straight through draws a blank box, so the common symbol fonts are mapped to
+// the Unicode characters they mean.
+const SYMBOL_FONT_MAP = {
+  symbol: {
+    0x22: "\u2200", 0x24: "\u2203", 0x27: "\u220b", 0x2a: "\u2217", 0x2d: "\u2212",
+    0x40: "\u2245",
+    0x41: "\u0391", 0x42: "\u0392", 0x43: "\u03a7", 0x44: "\u0394", 0x45: "\u0395",
+    0x46: "\u03a6", 0x47: "\u0393", 0x48: "\u0397", 0x49: "\u0399", 0x4a: "\u03d1",
+    0x4b: "\u039a", 0x4c: "\u039b", 0x4d: "\u039c", 0x4e: "\u039d", 0x4f: "\u039f",
+    0x50: "\u03a0", 0x51: "\u0398", 0x52: "\u03a1", 0x53: "\u03a3", 0x54: "\u03a4",
+    0x55: "\u03a5", 0x56: "\u03c2", 0x57: "\u03a9", 0x58: "\u039e", 0x59: "\u03a8",
+    0x5a: "\u0396", 0x5c: "\u2234", 0x5e: "\u22a5",
+    0x60: "\u203e", 0x61: "\u03b1", 0x62: "\u03b2", 0x63: "\u03c7", 0x64: "\u03b4",
+    0x65: "\u03b5", 0x66: "\u03c6", 0x67: "\u03b3", 0x68: "\u03b7", 0x69: "\u03b9",
+    0x6a: "\u03d5", 0x6b: "\u03ba", 0x6c: "\u03bb", 0x6d: "\u03bc", 0x6e: "\u03bd",
+    0x6f: "\u03bf", 0x70: "\u03c0", 0x71: "\u03b8", 0x72: "\u03c1", 0x73: "\u03c3",
+    0x74: "\u03c4", 0x75: "\u03c5", 0x76: "\u03d6", 0x77: "\u03c9", 0x78: "\u03be",
+    0x79: "\u03c8", 0x7a: "\u03b6", 0x7b: "{", 0x7c: "|", 0x7d: "}", 0x7e: "\u223c",
+    0xa0: "\u20ac", 0xa1: "\u03d2", 0xa2: "\u2032", 0xa3: "\u2264", 0xa4: "\u2044",
+    0xa5: "\u221e", 0xa6: "\u0192", 0xa7: "\u2663", 0xa8: "\u2666", 0xa9: "\u2665",
+    0xaa: "\u2660", 0xab: "\u2194", 0xac: "\u2190", 0xad: "\u2191", 0xae: "\u2192",
+    0xaf: "\u2193", 0xb0: "\u00b0", 0xb1: "\u00b1", 0xb2: "\u2033", 0xb3: "\u2265",
+    0xb4: "\u00d7", 0xb5: "\u221d", 0xb6: "\u2202", 0xb7: "\u2022", 0xb8: "\u00f7",
+    0xb9: "\u2260", 0xba: "\u2261", 0xbb: "\u2248", 0xbc: "\u2026", 0xbe: "\u23af",
+    0xbf: "\u21b5", 0xc0: "\u2135", 0xc1: "\u2111", 0xc2: "\u211c", 0xc3: "\u2118",
+    0xc4: "\u2297", 0xc5: "\u2295", 0xc6: "\u2205", 0xc7: "\u2229", 0xc8: "\u222a",
+    0xc9: "\u2283", 0xca: "\u2287", 0xcb: "\u2284", 0xcc: "\u2282", 0xcd: "\u2286",
+    0xce: "\u2208", 0xcf: "\u2209", 0xd0: "\u2220", 0xd1: "\u2207", 0xd5: "\u220f",
+    0xd6: "\u221a", 0xd7: "\u22c5", 0xd8: "\u00ac", 0xd9: "\u2227", 0xda: "\u2228",
+    0xdb: "\u21d4", 0xdc: "\u21d0", 0xdd: "\u21d1", 0xde: "\u21d2", 0xdf: "\u21d3",
+    0xe0: "\u25ca", 0xe1: "\u2329", 0xe5: "\u2211", 0xf1: "\u232a", 0xf2: "\u222b",
+    0xf3: "\u2320", 0xf4: "\u23ae", 0xf5: "\u2321", 0xf6: "\u23af", 0xfe: "\u25a0",
+  },
+  wingdings: {
+    0x2a: "\u261b", 0x2b: "\u261e", 0x2d: "\u270d", 0x2e: "\u270e", 0x2f: "\u270f",
+    0x36: "\u2714", 0x37: "\u2718", 0x38: "\u2720", 0x39: "\u2726", 0x3a: "\u2605",
+    0x3b: "\u2606", 0x3c: "\u2736", 0x3f: "\u2739",
+    0x4c: "\u25cf", 0x4d: "\u274d", 0x4e: "\u25a0", 0x4f: "\u25a1", 0x50: "\u2751",
+    0x51: "\u2752", 0x52: "\u25b2", 0x53: "\u25bc", 0x54: "\u25c6", 0x55: "\u2756",
+    0x56: "\u2605", 0x57: "\u2735", 0x58: "\u2734", 0x59: "\u2739",
+    0x6c: "\u25cf", 0x6d: "\u274d", 0x6e: "\u25a0", 0x6f: "\u25a1", 0x70: "\u2751",
+    0x71: "\u2752", 0x72: "\u25b2", 0x73: "\u25bc", 0x74: "\u25c6", 0x75: "\u2756",
+    0x76: "\u2605", 0x77: "\u2736", 0x78: "\u2734", 0x79: "\u2739",
+    0x9f: "\u2022", 0xa1: "\u261c", 0xa2: "\u261e", 0xa3: "\u261d", 0xa4: "\u261f",
+    0xa5: "\u2763", 0xa6: "\u2764", 0xa7: "\u2764", 0xa8: "\u2765", 0xa9: "\u2766",
+    0xaa: "\u2767", 0xab: "\u2660", 0xac: "\u2663", 0xad: "\u2665", 0xae: "\u2666",
+    0xaf: "\u2022", 0xb0: "\u25d6", 0xb1: "\u25d7", 0xb2: "\u25d0", 0xb3: "\u25d1",
+    0xb4: "\u25d3", 0xb5: "\u25d2", 0xb6: "\u25d5", 0xb7: "\u25d4", 0xb8: "\u25d8",
+    0xb9: "\u25d9", 0xba: "\u263a", 0xbb: "\u263b", 0xbc: "\u2639",
+    0xd8: "\u2191", 0xd9: "\u2193", 0xda: "\u2192", 0xdb: "\u2190",
+    0xdc: "\u21d1", 0xdd: "\u21d3", 0xde: "\u21d2", 0xdf: "\u21d0",
+    0xe0: "\u21e7", 0xe1: "\u21e9", 0xe2: "\u21e8", 0xe3: "\u21e6",
+    0xe8: "\u2600", 0xe9: "\u2601", 0xea: "\u2602", 0xeb: "\u2603", 0xec: "\u2604",
+    0xed: "\u2605", 0xee: "\u2606", 0xef: "\u2607", 0xf0: "\u2608",
+    0xfc: "\u2713", 0xfd: "\u2717", 0xfe: "\u2612",
+  },
+  webdings: {
+    0x21: "\u2713", 0x22: "\u2714", 0x25: "\u2605", 0x6f: "\u25a1", 0x70: "\u25a0",
+    0x72: "\u25b2", 0x73: "\u25bc", 0x74: "\u25c6", 0x75: "\u2756", 0x76: "\u2605",
+    0x77: "\u2606", 0xa1: "\u2708", 0xa2: "\u2709", 0xa5: "\u270e", 0xac: "\u2666",
+    0xab: "\u2663", 0xa9: "\u2665", 0xaa: "\u2660",
+  },
+};
+
+function symbolFromChar(char, font) {
   if (!char) return "";
   const code = parseInt(char, 16);
   if (isNaN(code)) return "";
+  const key = String(font || "").toLowerCase().replace(/\s+/g, "");
+  const table = SYMBOL_FONT_MAP[key];
+  if (table) {
+    const low = code & 0xff;
+    if (table[low]) return table[low];
+  }
   try {
     return String.fromCodePoint(code);
   } catch (err) {

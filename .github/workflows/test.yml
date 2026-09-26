@@ -58,7 +58,7 @@ jobs:
       - name: Run the suites
         run: |
           set -e
-          for suite in smoke filters copy virtual sizing meta numfmt cf robust cache doc-legacy math privacy pptx-layout docx-layout drawing tiff embed-font jxr; do
+          for suite in smoke filters copy virtual sizing meta numfmt cf robust cache doc-legacy math privacy pptx-layout docx-layout drawing vml tiff embed-font jxr; do
             printf "%-14s " "$suite"
             bun test/$suite.mjs 2>&1 | tail -1
           done

@@ -669,14 +669,16 @@ function applyAnchorStyles(el, anchor, contentWidth, widthPx) {
   const h = anchor.h || {};
   const v = anchor.v || {};
   let left = 0;
-  if (h.offset != null) {
+  if (h.offsetPx != null) {
+    left = h.offsetPx;
+  } else if (h.offset != null) {
     left = emuToPx(h.offset);
   } else if (h.align === "center") {
     left = Math.max(0, (contentWidth - widthPx) / 2);
   } else if (h.align === "right" || h.align === "end") {
     left = Math.max(0, contentWidth - widthPx);
   }
-  const top = v.offset != null ? emuToPx(v.offset) : 0;
+  const top = v.offsetPx != null ? v.offsetPx : (v.offset != null ? emuToPx(v.offset) : 0);
   el.style.position = "absolute";
   el.style.left = left + "px";
   el.style.top = top + "px";
@@ -690,4 +692,12 @@ function round1(value) {
   return Math.round(value * 100) / 100;
 }
 
-module.exports = { renderShapeGroup, applyAnchorStyles };
+module.exports = {
+  renderShapeGroup,
+  applyAnchorStyles,
+  makeSvg,
+  svgEl,
+  applySvgFill,
+  applySvgStroke,
+  round1,
+};
