@@ -1281,10 +1281,15 @@ function createDocxRenderer(opts) {
         nextPage();
       }
       if (used > 0 && used + total > contentHeightPx) {
-        // A heading directly before a table travels with the table, which is
-        // what Word and the reference renderers do with a form's title.
+        // A short lead-in (a form's title, a heading) travels with a table that
+        // would otherwise start a page alone, which is what Word and the
+        // reference renderers do with a dispensing form.
         const last = current.length ? current[current.length - 1] : null;
-        if (block.type === "table" && headingBlock(last)) {
+        const lastMetrics = last ? blockMetrics(last) : null;
+        const keepWithTable = last && last.type === "p" && block.type === "table"
+          && total > contentHeightPx * 0.4
+          && (headingBlock(last) || (lastMetrics && lastMetrics.lines <= 1));
+        if (keepWithTable) {
           current.pop();
           used -= blockTotal(last);
           nextPage();
