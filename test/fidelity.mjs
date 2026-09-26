@@ -188,6 +188,12 @@ function collectRunText(run, out) {
     for (const inner of run.runs) collectRunText(inner, out);
   } else if (run.type === "link") {
     for (const inner of run.link.runs) collectRunText(inner, out);
+  } else if (run.type === "shapegroup" && run.texts) {
+    // Text boxes inside a wpg drawing group are content too.
+    for (const text of run.texts) {
+      const trimmed = String(text).trim();
+      if (trimmed) out.push(trimmed);
+    }
   }
 }
 

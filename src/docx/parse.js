@@ -26,7 +26,7 @@
 
 const { Package, relTypeIs } = require("../shared/package");
 const {
-  childrenOf, firstOf, lastOf, attr, attrInt, attrBool, attrNs, flag, tagName,
+  childrenOf, firstOf, lastOf, findAll, attr, attrInt, attrBool, attrNs, flag, tagName,
 } = require("../shared/xml");
 const { createMediaCache, mediaUrl } = require("../media/media");
 const { parseMath } = require("./math");
@@ -354,10 +354,29 @@ function parseDrawing(el, model, ctx) {
     if (tag === "pic" || tag === "picture") {
       blip = findDescendant(child, "blip");
     } else if (tag === "wsp" || tag === "wps" || tag === "shape") {
-      // A shape can hold a text box. Word positions it absolutely, but losing
-      // its text would be worse than placing it inline, so it becomes a boxed
-      // block of its own runs.
+      // A shape can hold a text box, or stand alone as a filled outline (an
+      // anchored trapezoid, a bar, a callout). Word positions it absolutely,
+      // but losing it would be worse than placing it inline, so it becomes a
+      // boxed element of its own runs or its own silhouette.
       const textbox = findDescendant(child, "txbxContent");
+      const spPr = firstOf(child, "spPr");
+      const geometry = spPr ? (firstOf(spPr, "prstGeom") || firstOf(spPr, "custGeom")) : null;
+      if (!textbox && geometry && cx && cy) {
+        const texts = [];
+        for (const t of findAll(child, "t")) {
+          const value = t.textContent || "";
+          if (value.trim()) texts.push(value);
+        }
+        return {
+          type: "shapegroup",
+          node: child,
+          widthPx: Math.round((cx / 9525) * 100) / 100,
+          heightPx: Math.round((cy / 9525) * 100) / 100,
+          name: shapeName,
+          alt: altText,
+          texts,
+        };
+      }
       if (!textbox) return null;
       const runs = [];
       for (const paragraph of childrenOf(textbox, "p")) {
@@ -382,6 +401,26 @@ function parseDrawing(el, model, ctx) {
       return null;
     } else if (tag === "relIds") {
       return { type: "placeholder", kind: "smartart", label: "SmartArt diagram", widthPx: cx / 9525, heightPx: cy / 9525 };
+    } else if (tag === "wgp") {
+      // A Word drawing group: text boxes, pictures, freeform lines and
+      // connectors in one inline box. The renderer walks the group at draw
+      // time; the plain text is collected here for search, counts and the
+      // fidelity sweep.
+      if (!cx || !cy) return null;
+      const texts = [];
+      for (const t of findAll(child, "t")) {
+        const value = t.textContent || "";
+        if (value.trim()) texts.push(value);
+      }
+      return {
+        type: "shapegroup",
+        node: child,
+        widthPx: Math.round((cx / 9525) * 100) / 100,
+        heightPx: Math.round((cy / 9525) * 100) / 100,
+        name: shapeName,
+        alt: altText,
+        texts,
+      };
     }
   }
   if (!blip) return null;

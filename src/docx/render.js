@@ -28,6 +28,7 @@ const { twipToPx, halfPtToPx, emuToPx } = require("../shared/units");
 const { tagName } = require("../shared/xml");
 const { mathText } = require("./math");
 const { renderMathDom } = require("../shared/math-dom");
+const { renderShapeGroup: drawShapeGroup } = require("./drawing");
 
 const DEFAULT_FONT_PT = 11;
 const DEFAULT_PAGE_WIDTH_TW = 11906;
@@ -50,6 +51,7 @@ function createDocxRenderer(opts) {
     onInternalLink: opts.onInternalLink || function () {},
     onExternalLink: opts.onExternalLink || function (href) { window.open(href, "_blank"); },
     onReady: opts.onReady || function () {},
+    onPageChange: opts.onPageChange || function () {},
   };
 
   let destroyed = false;
@@ -213,6 +215,7 @@ function createDocxRenderer(opts) {
     });
     currentPage = 1;
     renderNotes();
+    observePage();
     callbacks.onReady({ outline: buildOutline(), pageCount: totalPages });
   }
 
@@ -376,18 +379,19 @@ function createDocxRenderer(opts) {
 
   // ---------- inline ----------
 
-  function renderInline(runs, parent, paraProps, ctx) {
-    let fieldState = null;
-    let fieldRuns = [];
-    let fieldKind = null;
+  function renderInline(runs, parent, paraProps, ctx, fieldState) {
+    // Field characters arrive in separate w:r elements, so their state has to
+    // outlive one pass of this loop.
+    const state = fieldState || { stack: [] };
     for (const run of runs) {
       if (!run) continue;
       if (run.type === "text") {
-        appendTextRun(parent, run, paraProps, fieldState ? fieldRuns : null);
+        if (suppressFieldResult(state, parent)) continue;
+        appendTextRun(parent, run, paraProps);
       } else if (run.type === "run") {
-        renderInline(run.runs, parent, paraProps, ctx);
+        renderInline(run.runs, parent, paraProps, ctx, state);
       } else if (run.type === "link") {
-        renderLink(parent, run.link, paraProps, ctx);
+        renderLink(parent, run.link, paraProps, ctx, state);
       } else if (run.type === "break") {
         appendBreak(parent);
       } else if (run.type === "tab") {
@@ -399,6 +403,8 @@ function createDocxRenderer(opts) {
         renderTextBox(parent, run, paraProps);
       } else if (run.type === "image") {
         renderImage(parent, run);
+      } else if (run.type === "shapegroup") {
+        renderShapeGroup(parent, run);
       } else if (run.type === "math") {
         renderMath(run.node, parent, paraProps);
       } else if (run.type === "placeholder") {
@@ -415,28 +421,10 @@ function createDocxRenderer(opts) {
         ref.setText("[c]");
         ref.title = "Comment " + (run.id || "");
       } else if (run.type === "fieldChar") {
-        if (run.stage === "begin") {
-          fieldState = "instr";
-          fieldRuns = [];
-          fieldKind = null;
-        } else if (run.stage === "separate") {
-          fieldState = "result";
-        } else if (run.stage === "end") {
-          if (fieldState === "instr" && fieldRuns.length === 0) {
-            const instr = plainText(fieldRuns);
-            fieldKind = /PAGE/.test(instr) ? "page" : /NUMPAGES/.test(instr) ? "pages" : null;
-          }
-          if (fieldKind === "page" || fieldKind === "pages") {
-            const marker = parent.createSpan("ov-docx-field");
-            marker.setText(String(fieldKind === "page" ? currentPage : totalPages));
-            marker.dataset.field = fieldKind;
-          }
-          fieldState = null;
-          fieldRuns = [];
-          fieldKind = null;
-        }
+        handleFieldChar(run, state, parent);
       } else if (run.type === "instr") {
-        fieldRuns.push({ type: "text", text: run.text });
+        const frame = state.stack[state.stack.length - 1];
+        if (frame) frame.instr += run.text;
       } else if (run.type === "field") {
         const marker = parent.createSpan("ov-docx-field");
         if (run.kind === "page") marker.setText(String(currentPage));
@@ -451,6 +439,52 @@ function createDocxRenderer(opts) {
     }
   }
 
+  // PAGE and NUMPAGES substitute the number at draw time. The saved result in
+  // the file can be stale (one footer carries the value 53 in a 31-page
+  // document), so it is dropped in favour of the live figure.
+  function handleFieldChar(run, state, parent) {
+    if (run.stage === "begin") {
+      state.stack.push({ instr: "", kind: null, mode: "instr", emitted: false });
+      return;
+    }
+    if (run.stage === "separate") {
+      const frame = state.stack[state.stack.length - 1];
+      if (frame) {
+        frame.kind = fieldKindFromInstr(frame.instr);
+        frame.mode = "result";
+      }
+      return;
+    }
+    if (run.stage === "end") {
+      const frame = state.stack.pop();
+      if (!frame) return;
+      if (!frame.kind) frame.kind = fieldKindFromInstr(frame.instr);
+      if (frame.kind && !frame.emitted) emitFieldNumber(frame, parent);
+    }
+  }
+
+  function fieldKindFromInstr(instr) {
+    const text = String(instr || "").toUpperCase();
+    if (!text) return null;
+    if (/NUMPAGES|SECTIONPAGES/.test(text)) return "pages";
+    if (/\bPAGE\b/.test(text)) return "page";
+    return null;
+  }
+
+  function suppressFieldResult(state, parent) {
+    const frame = state.stack[state.stack.length - 1];
+    if (!frame || frame.mode !== "result" || !frame.kind) return false;
+    if (!frame.emitted) emitFieldNumber(frame, parent);
+    return true;
+  }
+
+  function emitFieldNumber(frame, parent) {
+    frame.emitted = true;
+    const marker = parent.createSpan("ov-docx-field");
+    marker.setText(String(frame.kind === "page" ? currentPage : totalPages));
+    marker.dataset.field = frame.kind;
+  }
+
   let currentPage = 1;
   let totalPages = 1;
 
@@ -462,7 +496,7 @@ function createDocxRenderer(opts) {
     return noteCounts[kind];
   }
 
-  function renderLink(parent, link, paraProps, ctx) {
+  function renderLink(parent, link, paraProps, ctx, fieldState) {
     if (!link) return;
     const anchor = doc.createElement("span");
     anchor.className = "ov-docx-link";
@@ -480,17 +514,13 @@ function createDocxRenderer(opts) {
         callbacks.onInternalLink(link.anchor);
       });
     }
-    renderInline(link.runs, anchor, paraProps, ctx);
+    renderInline(link.runs, anchor, paraProps, ctx, fieldState);
     parent.appendChild(anchor);
   }
 
-  function appendTextRun(parent, run, paraProps, fieldRuns) {
+  function appendTextRun(parent, run, paraProps) {
     const props = resolveRunProps(null, run.props, paraProps);
-    if (!run.text) {
-      if (fieldRuns) fieldRuns.push(run);
-      return;
-    }
-    if (fieldRuns) fieldRuns.push(run);
+    if (!run.text) return;
     const span = parent.createSpan("ov-docx-r");
     if (run.deleted) span.addClass("is-deleted");
     span.setText(run.text);
@@ -558,6 +588,18 @@ function createDocxRenderer(opts) {
     parent.appendChild(wrap);
   }
 
+  // A Word drawing group from wpg:wgp. The drawing module places every child
+  // from its own transform; paragraph rendering stays here so a text box uses
+  // the same style cascade as the rest of the document.
+  function renderShapeGroup(parent, run) {
+    drawShapeGroup(parent, run, {
+      theme: model.theme,
+      mediaUrl: (rid) => model.mediaUrl(rid),
+      parseParagraph: (el) => require("./parse").parseParagraph(el, model, { listCounters: new Map() }),
+      drawParagraph: (block, host) => renderParagraph(block, host),
+    });
+  }
+
   // A text box from a shape: its own runs, drawn where the shape is anchored.
   function renderTextBox(parent, run, paraProps) {
     const box = parent.createDiv("ov-docx-textbox");
@@ -584,18 +626,27 @@ function createDocxRenderer(opts) {
     else if (props.align === "right") table.style.marginLeft = "auto";
     if (props.widthTw) table.style.width = twipToPx(props.widthTw) + "px";
     else table.style.width = "100%";
+    // tblInd shifts the whole table from the margin.
+    if (props.indentTw && props.align !== "center" && props.align !== "right") {
+      table.style.marginLeft = twipToPx(props.indentTw) + "px";
+    }
 
     const grid = block.grid && block.grid.length ? block.grid : null;
     const colCount = computeColumnCount(block, grid);
-    if (grid && grid.length) {
+    if (grid) {
       const widths = grid.map((w) => (w > 0 ? twipToPx(w) : null));
-      const total = widths.reduce((a, b) => a + (b || 0), 0);
+      const known = widths.reduce((a, b) => a + (b || 0), 0);
+      const missing = widths.filter((w) => !w).length;
+      const fallback = missing ? Math.max(24, (contentWidthPx - known) / missing) : 0;
+      // The grid is the truth for a fixed layout. Chrome lets the column
+      // widths grow the table past its declared width when they disagree, so
+      // the two are kept equal here.
+      if (!props.widthTw && known) table.style.width = (known + missing * fallback) + "px";
       table.style.tableLayout = "fixed";
       const colgroup = doc.createElement("colgroup");
       for (let i = 0; i < colCount; i++) {
         const col = doc.createElement("col");
-        if (widths[i]) col.style.width = widths[i] + "px";
-        else if (total > 0) col.style.width = Math.max(24, contentWidthPx / colCount) + "px";
+        col.style.width = (widths[i] || fallback || Math.max(24, contentWidthPx / colCount)) + "px";
         colgroup.appendChild(col);
       }
       table.appendChild(colgroup);
@@ -610,7 +661,13 @@ function createDocxRenderer(opts) {
         tr.style.height = twipToPx(row.props.heightTw) + "px";
       }
       if (row.props && row.props.header) tr.addClass("ov-docx-table-header");
-      for (const cell of row.cells) renderCell(tr, cell, block, r);
+      for (const cell of row.cells) {
+        // A vMerge continuation is covered by the restart cell's rowspan above.
+        // Emitting it as well would shift every following cell one column right
+        // and split the row.
+        if (cell.vMerge === "continue") continue;
+        renderCell(tr, cell, block, r, Boolean(grid));
+      }
       tbody.appendChild(tr);
     }
     parent.appendChild(table);
@@ -618,7 +675,7 @@ function createDocxRenderer(opts) {
   }
 
   function computeColumnCount(block, grid) {
-    if (grid && grid.length) return grid.length + 1;
+    if (grid) return grid.length;
     let max = 0;
     for (const row of block.rows) {
       let count = 0;
@@ -628,27 +685,34 @@ function createDocxRenderer(opts) {
     return max || 1;
   }
 
-  function renderCell(tr, cell, block, rowIndex) {
+  function renderCell(tr, cell, block, rowIndex, hasGrid) {
     const props = cell.props || {};
     const td = doc.createElement("td");
-    if (cell.gridSpan > 1) td.colSpan = cell.gridSpan;
+    // Attributes, not properties: a host that does not reflect colSpan onto the
+    // attribute drops the span out of any serialised HTML.
+    if (cell.gridSpan > 1) td.setAttribute("colspan", String(cell.gridSpan));
     const rowspan = continuationRowspan(block, rowIndex, cell);
-    if (rowspan > 1) td.rowSpan = rowspan;
-    if (cell.vMerge === "continue") {
-      // Covered by the cell above; still emitted so the column count stays right.
-    }
-    if (props.widthTw) td.style.width = twipToPx(props.widthTw) + "px";
+    if (rowspan > 1) td.setAttribute("rowspan", String(rowspan));
+    // The colgroup owns the widths when there is a grid; a cell width on top of
+    // it can make Chrome widen the table past the declared size.
+    if (!hasGrid && props.widthTw) td.style.width = twipToPx(props.widthTw) + "px";
     if (props.vAlign) td.style.verticalAlign = props.vAlign === "center" ? "middle" : props.vAlign;
     if (props.shading && props.shading.color) td.style.backgroundColor = props.shading.color;
     const tableBorders = block.props && block.props.borders ? block.props.borders : null;
     const borders = mergeBorders(tableBorders, props.borders);
     applyCellBorders(td, borders);
-    if (props.margin) {
-      if (props.margin.left != null) td.style.paddingLeft = twipToPx(props.margin.left) + "px";
-      else td.style.paddingLeft = "5.4pt";
-      if (props.margin.top != null) td.style.paddingTop = twipToPx(props.margin.top) + "px";
-      if (props.margin.bottom != null) td.style.paddingBottom = twipToPx(props.margin.bottom) + "px";
-      if (props.margin.right != null) td.style.paddingRight = twipToPx(props.margin.right) + "px";
+    const tableMargin = block.props && block.props.cellMargin ? block.props.cellMargin : null;
+    const cellMargin = props.margin || null;
+    if (tableMargin || cellMargin) {
+      // The table's tblCellMar is the default for every cell; tcMar overrides
+      // it per side. Without this a cell that states zero margins still gets
+      // the stylesheet's 3px 5px and a 31-row form overflows its page.
+      for (const side of ["top", "left", "bottom", "right"]) {
+        const value = cellMargin && cellMargin[side] != null ? cellMargin[side]
+          : tableMargin && tableMargin[side] != null ? tableMargin[side]
+            : 0;
+        td.style["padding" + side[0].toUpperCase() + side.slice(1)] = twipToPx(value) + "px";
+      }
     }
     const cellState = { state: null, ctx: { listCounters: new Map() } };
     renderBlocks(cell.blocks, td, cellState);
@@ -657,26 +721,32 @@ function createDocxRenderer(opts) {
 
   function continuationRowspan(block, rowIndex, cell) {
     if (cell.vMerge !== "restart") return 1;
+    // The covering cell lives in the same grid column, not the same cell index:
+    // a gridSpan earlier in the row shifts every later cell.
+    const column = gridColumnOf(block.rows[rowIndex], cell);
     let span = 1;
     for (let r = rowIndex + 1; r < block.rows.length; r++) {
-      const nextRow = block.rows[r];
-      const match = findCellAt(nextRow, cellIndexInRow(block.rows[rowIndex], cell));
+      const match = findCellAt(block.rows[r], column);
       if (match && match.vMerge === "continue") span++;
       else break;
     }
     return span;
   }
 
-  function cellIndexInRow(row, cell) {
-    return row.cells.indexOf(cell);
+  function gridColumnOf(row, cell) {
+    let column = 0;
+    for (const candidate of row.cells) {
+      if (candidate === cell) return column;
+      column += candidate.gridSpan || 1;
+    }
+    return column;
   }
 
-  function findCellAt(row, index) {
-    if (index < 0) return null;
+  function findCellAt(row, column) {
     let count = 0;
     for (const cell of row.cells) {
       const span = cell.gridSpan || 1;
-      if (index >= count && index < count + span) return cell;
+      if (column >= count && column < count + span) return cell;
       count += span;
     }
     return null;
@@ -783,6 +853,7 @@ function createDocxRenderer(opts) {
         else if (run.type === "run") walk(run.runs);
         else if (run.type === "link") walk(run.link.runs);
         else if (run.type === "tab") out += "\t";
+        else if (run.type === "shapegroup" && run.texts) out += run.texts.join(" ") + " ";
       }
     };
     walk(runs);
@@ -898,7 +969,7 @@ function createDocxRenderer(opts) {
       const blocks = run.type === "run" ? run.runs : [run];
       for (const inner of blocks || []) {
         if (!inner) continue;
-        if (inner.type === "image" || inner.type === "textbox") {
+        if (inner.type === "image" || inner.type === "textbox" || inner.type === "shapegroup") {
           const imageHeight = Number(inner.heightPx) > 0 ? Number(inner.heightPx) : 0;
           const imageLines = Number(inner.heightPx) > 0 ? Math.ceil(imageHeight / Math.max(1, linePx)) : 0;
           contentHeight = Math.max(contentHeight, imageHeight + 4, imageLines * linePx);
@@ -973,9 +1044,68 @@ function createDocxRenderer(opts) {
     if (scrollEl && pos) scrollEl.scrollTop = pos.top || 0;
   }
 
+  // ---------- page tracking ----------
+
+  let lastReportedPage = 0;
+
+  function observePage() {
+    if (!scrollEl || !scrollEl.addEventListener) return;
+    scrollEl.addEventListener("scroll", onScroll, { passive: true });
+    reportCurrentPage();
+  }
+
+  let scrollPending = false;
+  function onScroll() {
+    if (scrollPending) return;
+    scrollPending = true;
+    const raf = typeof requestAnimationFrame === "function" ? requestAnimationFrame : (cb) => setTimeout(cb, 16);
+    raf(() => {
+      scrollPending = false;
+      reportCurrentPage();
+    });
+  }
+
+  function pagesInOrder() {
+    const out = [];
+    for (const el of pagesEl.children) {
+      if (el.classList && el.classList.contains("ov-docx-page")) out.push(el);
+    }
+    return out;
+  }
+
+  // The page the reader is on: the first page whose bottom edge is still below
+  // the top of the scroll viewport.
+  function currentPageNumber() {
+    const list = pagesInOrder();
+    if (!list.length) return 1;
+    const top = scrollEl.getBoundingClientRect().top + 8;
+    for (let i = 0; i < list.length; i++) {
+      if (list[i].getBoundingClientRect().bottom > top) return i + 1;
+    }
+    return list.length;
+  }
+
+  function reportCurrentPage() {
+    const count = pagesInOrder().length;
+    if (!count) return;
+    const page = currentPageNumber();
+    if (page === lastReportedPage && lastReportedPage !== 0) return;
+    lastReportedPage = page;
+    callbacks.onPageChange({ page, count });
+  }
+
   function setSettings(patch) {
+    const previousZoom = settings.zoom || 1;
     Object.assign(settings, patch);
-    if (rootEl) rootEl.style.setProperty("--ov-docx-zoom", String(settings.zoom));
+    if (!rootEl) return;
+    rootEl.style.setProperty("--ov-docx-zoom", String(settings.zoom));
+    // CSS zoom scales the pages, and the scroll offset stays in unscaled
+    // pixels. Keeping the raw offset walks the reader down the document when
+    // zooming out; following the same ratio keeps the page in view.
+    if (scrollEl && patch && patch.zoom != null && patch.zoom !== previousZoom && previousZoom > 0) {
+      scrollEl.scrollTop = scrollEl.scrollTop * (patch.zoom / previousZoom);
+      reportCurrentPage();
+    }
   }
 
   function destroy() {
@@ -1003,6 +1133,8 @@ function createDocxRenderer(opts) {
     scrollToAnchor,
     scrollToNote,
     getOutline: buildOutline,
+    currentPage: currentPageNumber,
+    pageCount: () => pagesInOrder().length,
   };
 }
 

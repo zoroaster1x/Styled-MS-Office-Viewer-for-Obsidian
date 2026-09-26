@@ -98,6 +98,13 @@
   text-align: center;
 }
 
+.ov-page-label {
+  font-size: 0.8em;
+  color: var(--text-muted);
+  white-space: nowrap;
+  margin-right: 4px;
+}
+
 .ov-tabs {
   display: flex;
   gap: 2px;
@@ -689,6 +696,40 @@
 .ov-docx-image-float {
   float: left;
   margin: 0 10px 6px 0;
+}
+
+/* A Word drawing group. One inline box at the wp:extent size, children placed
+   absolutely by their own transforms in document order. */
+.ov-docx-shapegroup {
+  display: inline-block;
+  position: relative;
+  vertical-align: bottom;
+  max-width: 100%;
+  line-height: 1;
+}
+
+.ov-docx-shape {
+  position: absolute;
+  overflow: visible;
+  box-sizing: border-box;
+}
+
+.ov-docx-shape-svg {
+  position: absolute;
+  left: 0;
+  top: 0;
+  overflow: visible;
+  pointer-events: none;
+}
+
+.ov-docx-shape-picture img {
+  display: block;
+}
+
+.ov-docx-shape .ov-docx-p {
+  margin: 0;
+  white-space: pre-wrap;
+  line-height: 1.2;
 }
 
 .ov-docx-image.is-missing,
