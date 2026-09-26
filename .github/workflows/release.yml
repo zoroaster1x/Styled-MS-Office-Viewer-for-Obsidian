@@ -64,6 +64,9 @@ jobs:
         with:
           subject-path: styles.css
 
+      # The release body is written when the release is created (gh release
+      # create) so it can carry the full changelog. This step only attaches the
+      # freshly built assets; setting `body` here would overwrite those notes.
       - name: Upload release assets
         uses: softprops/action-gh-release@v2
         with:
@@ -71,17 +74,4 @@ jobs:
             main.js
             manifest.json
             styles.css
-          body: |
-            Styled MS Office Viewer, read only Office and OpenDocument viewing
-            inside Obsidian.
-
-            Open .xlsx, .xlsm, .xltx, .xltm, .csv, .tsv, .ods, .docx, .docm,
-            .dotx, .dotm, .odt, .rtf, .doc, .pptx, .pptm, .ppsx, .ppsm, .potx,
-            .potm and .odp and read them with their real styling: a styled
-            grid, paginated documents, and slides with a thumbnail rail and a
-            slideshow mode.
-
-            Install: copy main.js, manifest.json and styles.css into
-            <Vault>/.obsidian/plugins/styled-ms-office-viewer/ and enable the
-            plugin in Settings, Community plugins.
           fail_on_unmatched_files: true

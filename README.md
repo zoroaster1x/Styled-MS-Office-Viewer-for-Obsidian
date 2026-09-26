@@ -99,7 +99,7 @@ A toolbar sits above every file. It carries search, zoom, and the actions that f
 
 **Workbooks.** Drag column and row header edges to size them, double click an edge to fit it to its content, and the sizes are remembered per sheet. Filter chips above the grid hide whole groups in one click, and the full filter dropdown stays available on every filterable column. Conditional formatting and frozen panes are drawn as the file declares them.
 
-**Documents.** The body is split into pages with a quiet page number in the bottom margin when the document has no footer of its own. Text and images are selectable and copyable. The outline panel lists the headings. The toolbar shows the page you are on beside the zoom, updated as you scroll, and changing the zoom keeps the same page in view.
+**Documents.** The body is split into pages with a quiet page number in the bottom margin when the document has no footer of its own. Text and images are selectable and copyable. The outline panel lists the headings. The toolbar shows the page you are on beside the zoom, updated as you scroll, and changing the zoom keeps the same page in view. Pages render as they come into view, so a hundred page manual opens like a ten page one; search, the word counts and the outline still cover the whole document.
 
 **Presentations.** A slideshow button (and the **Start or stop the slideshow** command) fills the pane with the slide, takes the arrow keys, space, Home and End, and leaves on Escape. Slides carry their final state: the renderer draws every shape and never plays the animation tree, so nothing is hidden behind an effect. The file's own transitions and animations are reported in the details panel instead of being played. A deck that embeds its fonts renders them, so it keeps its typography on a machine that never had the face installed.
 
@@ -120,7 +120,8 @@ A toolbar sits above every file. It carries search, zoom, and the actions that f
 | | Minimum column width and row height | A floor under every sheet, off at 0 |
 | Documents | Document zoom | Starting zoom for new views |
 | | Page background | Always white, like Word, or follow the theme |
-| | Show page numbers | Substitute PAGE and NUMPAGES where the document has them |
+| | Show page numbers | Substitute the live PAGE and NUMPAGES numbers where the document has them |
+| | Windowed page rendering | Draw only the pages near the viewport; pages appear as you scroll |
 | Presentations | Slide zoom and fit | Fit the whole slide, or keep its saved size |
 | | Show speaker notes | Show the notes pane under the slide |
 | View | Show the counts inside the view | Move the word, character and page counts to the bottom left of the view instead of the app's status bar |
@@ -135,8 +136,11 @@ Every number below comes from the harness in `test/`, over a library of universi
 
 | Check | Result |
 |---|---|
-| Text fidelity over 396 documents | 396 pass, 0 fail, 43.1 s |
-| Parse and render over 397 documents (228 Word, 163 decks, 1 workbook, 5 Word 97) | 0 failures, 36.6 s with rendering |
+| Text fidelity over 396 documents | 396 pass, 0 fail, 41.4 s |
+| Parse and render over 397 documents (228 Word, 163 decks, 1 workbook, 5 Word 97) | 0 failures, 33.1 s with full rendering |
+| 11.1 MB, 36 page manual, open in Obsidian's windowed mode | parse about 130 ms, first paint about 50 ms (was about 300 ms and 800 ms) |
+| 8.8 MB, 48 page handbook, open in Obsidian's windowed mode | parse about 120 ms, first paint about 50 ms (was about 600 ms and 130 ms) |
+| 9.8 MB deck, first slide plus rail | about 320 ms (was about 640 ms) |
 | Largest deck, 191 MB, 51 slides | opens in about 600 ms |
 | Reopening a cached document | no parse at all |
 | Hostile input (truncated, encrypted, traversal, ZIP bomb, entity payloads, bounded fuzz) | every case refused with a reason, no hang |
@@ -200,7 +204,7 @@ These are honest gaps, not bugs waiting to be reported:
 - **Animations and transitions** are never played: a reader must not lose content to an effect. The details panel reports what the file declares.
 - **Word's pagination is estimated.** Page breaks come from measured block heights, so a document can come out a page longer or shorter than Word makes it. Page size, margins, headers, footers and page numbers are real, and `PAGE` and `NUMPAGES` fields show the live numbers.
 - **A floating Word shape or text box is drawn in flow** at its anchor paragraph. Its size, fill, outline and text are its own, but it does not push nearby text aside the way Word's absolute anchor does.
-- **VML drawings** (older `.docx` files and the Fallback branch of a shape) are drawn: shapes, groups, lines, text boxes and pictures. Word's own wrap algorithm is approximated, so a legacy floating diagram can sit a little differently from Word.
+- **VML drawings** (older `.docx` files and the Fallback branch of a shape) are drawn: shapes, groups, lines, text boxes and pictures. Text-relative boxes reserve their room and step down the page, square wrap floats beside the text, and page-relative boxes sit on the page. Word's exact float algorithm is approximated, so a page dense with legacy overlays can run a little longer than Word's.
 - **Text columns** are not laid out: a multi-column section reads as one column. Page borders and a drop cap's float are not drawn.
 - **Unusual OMML structures** fall back to their own text rather than disappearing.
 - **Spreadsheet text rotation, images and comments** are not drawn. Rich text runs inside a cell keep the cell's own formatting.

@@ -683,7 +683,9 @@ function applyAnchorStyles(el, anchor, contentWidth, widthPx) {
   el.style.left = left + "px";
   el.style.top = top + "px";
   el.style.margin = "0";
-  el.style.zIndex = anchor.behindDoc ? "-1" : "1";
+  // Negative z-index in the file is behind the text; a CSS -1 would paint
+  // behind the white page and vanish.
+  el.style.zIndex = "1";
   if (el.addClass) el.addClass("ov-docx-anchor");
   return true;
 }

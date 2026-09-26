@@ -629,7 +629,10 @@
   flex-direction: column;
   font-family: Calibri, Carlito, "Segoe UI", sans-serif;
   font-size: 11pt;
-  line-height: 1.35;
+  /* The pagination planner measures a line at 1.18 of the font size, so the
+     page renders at the same ratio; Word's single spacing is about the same
+     for Calibri. */
+  line-height: 1.18;
 }
 
 .ov-theme-surface .ov-docx-page {
@@ -641,6 +644,8 @@
 
 .ov-docx-pagecontent {
   flex: 1 1 auto;
+  /* A page-relative VML overlay is positioned against the content box. */
+  position: relative;
 }
 
 .ov-docx-pageheader,
@@ -671,7 +676,8 @@
 /* An empty paragraph is still a line at the paragraph mark's size. Without a
    line box ten blank paragraphs collapse into one 8pt-margin gap and a form
    loses its shape. */
-.ov-docx-p:empty::after {
+.ov-docx-p:empty::after,
+.ov-docx-p.ov-anchor-only::after {
   content: "\200b";
 }
 
@@ -767,11 +773,15 @@
 /* A legacy VML drawing: the wrapper holds absolutely placed child shapes from
    the file's own coordinates, text and pictures included. */
 .ov-docx-vml {
-  display: inline-block;
-  position: relative;
-  vertical-align: bottom;
+  display: block;
+  position: absolute;
   max-width: 100%;
   line-height: 1;
+}
+
+/* Reserves the room a text-relative VML shape takes in its line. */
+.ov-docx-vml-spacer {
+  max-width: 100%;
 }
 
 .ov-docx-vml-group {

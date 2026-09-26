@@ -51,13 +51,17 @@ function parseVmlRun(node) {
   const height = absLength(style.height);
   const left = absLength(style["margin-left"]) || absLength(style.left) || 0;
   const top = absLength(style["margin-top"]) || absLength(style.top) || 0;
-  const absolute = (style.position || "absolute") === "absolute";
-  const wrap = (style["mso-wrap-style"] || "square").toLowerCase();
-  // Square and top-and-bottom wraps reserve the box's room in the line; none
-  // and through are truly floating.
-  const outOfFlow = absolute && (wrap === "none" || wrap === "through");
+  // A VML pict is an absolutely positioned overlay anchored to its paragraph.
+  // It never takes room in the line: the paragraphs around it carry whatever
+  // spacing the file gives them, and the shape sits on top exactly where the
+  // style's margins say. Treating the box as flowing content is what pushed
+  // every equation box in the equation sheet down the page.
   const relativeH = (style["mso-position-horizontal-relative"] || "text").toLowerCase();
   const relativeV = (style["mso-position-vertical-relative"] || "text").toLowerCase();
+  // Page-relative axes need the page as the positioning context; the others
+  // are measured from the paragraph.
+  const pageVertical = relativeV === "page" || relativeV === "margin";
+  const context = pageVertical ? "page" : "paragraph";
   const texts = [];
   for (const t of findAll(node, "t")) {
     const value = t.textContent || "";
@@ -71,13 +75,15 @@ function parseVmlRun(node) {
     texts,
     relativeH,
     relativeV,
+    wrapSquare: (style["mso-wrap-style"] || "").toLowerCase() === "square",
     offsetPx: { left, top },
-    anchor: outOfFlow ? {
-      outOfFlow: true,
+    anchor: {
+      outOfFlow: pageVertical,
+      context,
       h: { offsetPx: left, from: relativeH },
       v: { offsetPx: top, from: relativeV },
       behindDoc: Number(style["z-index"] || 0) < 0,
-    } : null,
+    },
   };
 }
 
@@ -135,27 +141,67 @@ function renderVml(parent, run, opts) {
   const root = findRootShape(run.node);
   if (!root) return;
   const doc = parent.ownerDocument;
-  const wrapper = parent.createSpan("ov-docx-vml");
   const width = run.widthPx > 0 ? run.widthPx : 160;
   const height = run.heightPx > 0 ? run.heightPx : 0;
+  const left = (run.offsetPx && run.offsetPx.left) || 0;
+  const top = (run.offsetPx && run.offsetPx.top) || 0;
+  const pageContext = run.anchor && run.anchor.context === "page";
+  const boxLeft = run.relativeH === "page"
+    ? left - (opts.pageMarginLeftPx || 0) - (opts.plannedLeft || 0)
+    : left - (opts.plannedLeft || 0);
+
+  // The line keeps the shape's room through a spacer, so a column of boxes
+  // steps down the page the way it does in Word and the reference renderers.
+  // A page-relative vertical is placed on the page instead and reserves
+  // nothing.
+  if (!pageContext) {
+    const spacer = parent.createSpan("ov-docx-vml-spacer");
+    if (run.wrapSquare) {
+      // Square wrap is a float: the lines around the box flow beside it, which
+      // is what puts the Fv' fractions left of the y2 box, while the box takes
+      // no step in the block flow.
+      spacer.style.display = "block";
+      spacer.style.width = width + "px";
+      spacer.style.height = Math.max(0, height) + "px";
+      spacer.style.marginTop = top + "px";
+      const contentWidth = opts.contentWidthPx || 0;
+      if (contentWidth && boxLeft + width / 2 > contentWidth / 2) {
+        spacer.style.float = "right";
+        spacer.style.marginRight = Math.max(0, contentWidth - (boxLeft + width)) + "px";
+      } else {
+        spacer.style.float = "left";
+        spacer.style.marginLeft = Math.max(0, boxLeft) + "px";
+      }
+    } else {
+      // No wrap: the box's own paragraph grows to the shape, and the column of
+      // boxes steps down the page.
+      spacer.style.display = "inline-block";
+      spacer.style.verticalAlign = "top";
+      spacer.style.width = width + "px";
+      spacer.style.height = Math.max(0, top + height) + "px";
+      spacer.style.marginLeft = Math.max(0, boxLeft) + "px";
+    }
+    parent.appendChild(spacer);
+  }
+
+  // The shape itself sits at its own offset, above the line it reserved.
+  const wrapper = parent.createSpan("ov-docx-vml");
   wrapper.style.width = width + "px";
   if (height) wrapper.style.height = height + "px";
-  if (run.anchor && run.anchor.outOfFlow) {
-    const anchor = run.anchor;
-    // Page-relative offsets are measured from the page edge; our paragraph
-    // starts at the margin.
-    if (run.relativeH === "page") anchor.h.offsetPx = Math.max(0, (anchor.h.offsetPx || 0) - (opts.pageMarginLeftPx || 0));
-    if (run.relativeV === "page") anchor.v.offsetPx = Math.max(0, (anchor.v.offsetPx || 0) - (opts.pageMarginTopPx || 0));
-    applyAnchorStyles(wrapper, anchor, opts.contentWidthPx || 0, width);
+  wrapper.style.position = "absolute";
+  if (pageContext) {
+    // Page coordinates: the containing block (the page content) starts at the
+    // margin, so a page-relative offset takes the margin off.
+    wrapper.style.left = (run.relativeH === "page" ? left - (opts.pageMarginLeftPx || 0) : left) + "px";
+    wrapper.style.top = (run.relativeV === "page" ? top - (opts.pageMarginTopPx || 0) : top) + "px";
   } else {
-    let left = (run.offsetPx && run.offsetPx.left) || 0;
-    let top = (run.offsetPx && run.offsetPx.top) || 0;
-    if (run.relativeH === "page") left = Math.max(0, left - (opts.pageMarginLeftPx || 0));
-    if (run.relativeV === "page") top = Math.max(0, top - (opts.pageMarginTopPx || 0));
-    wrapper.style.marginLeft = left + "px";
-    wrapper.style.marginTop = top + "px";
-    wrapper.style.verticalAlign = "top";
+    wrapper.style.left = boxLeft + "px";
+    wrapper.style.top = top + "px";
   }
+  // A negative z-index in the file means behind the text, not behind the page:
+  // a real -1 paints under the white page background in CSS and disappears.
+  wrapper.style.zIndex = "1";
+  if (wrapper.addClass) wrapper.addClass("ov-docx-anchor");
   parent.appendChild(wrapper);
   drawShape(root, wrapper, { sx: 1, sy: 1, ox: 0, oy: 0 }, doc, opts);
 }
