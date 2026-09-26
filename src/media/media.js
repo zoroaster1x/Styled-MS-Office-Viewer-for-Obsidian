@@ -100,18 +100,26 @@ function buildMediaUrl(pkg, path) {
   if (!bytes) return null;
   const mime = pkg.mimeOf(path);
   try {
-    if (mime === "image/tiff" || mime === "image/tif") return tiffToDataUrl(bytes);
+    if (mime === "image/tiff" || mime === "image/tif") {
+      return decodedMedia("tiff", bytes, () => tiffToDataUrl(bytes));
+    }
     // Chromium has no JPEG XR decoder, so the WebAssembly codec draws it. The
     // module is warmed before the parse; when it is not ready (or the host
     // refuses WebAssembly) null shows the caller's named placeholder instead of
     // a broken image. JPEG XL is still undecodable here.
     if (/^image\/(vnd\.ms-photo|jxr)$/i.test(mime) || /\.(wdp|hdp|jxr)$/i.test(path)) {
-      const image = decodeJxrRgba(bytes);
-      return image ? pixelsToDataUrl(image.data, image.width, image.height) : null;
+      return decodedMedia("jxr", bytes, () => {
+        const image = decodeJxrRgba(bytes);
+        return image ? pixelsToDataUrl(image.data, image.width, image.height) : null;
+      });
     }
     if (/^image\/jxl$/i.test(mime) || /\.jxl$/i.test(path)) return null;
-    if (mime === "image/emf" || /\.emf$/i.test(path)) return metafileToDataUrl(bytes, "emf");
-    if (mime === "image/wmf" || /\.wmf$/i.test(path)) return metafileToDataUrl(bytes, "wmf");
+    if (mime === "image/emf" || /\.emf$/i.test(path)) {
+      return decodedMedia("emf", bytes, () => metafileToDataUrl(bytes, "emf"));
+    }
+    if (mime === "image/wmf" || /\.wmf$/i.test(path)) {
+      return decodedMedia("wmf", bytes, () => metafileToDataUrl(bytes, "wmf"));
+    }
     if (mime === "image/svg+xml") {
       return "data:image/svg+xml;charset=utf-8," + encodeURIComponent(new TextDecoder("utf-8").decode(bytes));
     }
@@ -122,6 +130,51 @@ function buildMediaUrl(pkg, path) {
     return null;
   }
   return null;
+}
+
+// Decoding a metafile or a TIFF is the most expensive media work there is, and
+// the same bytes appear in many documents (a logo, a form, a photograph pasted
+// around a course). A bounded LRU keyed by a sampled content hash keeps the
+// result, so scrolling back to a diagram or reopening the file is instant.
+const DECODED_LRU = new Map();
+const DECODED_MAX_ENTRIES = 24;
+const DECODED_MAX_BYTES = 32 * 1024 * 1024;
+let decodedCacheBytes = 0;
+
+function contentKey(kind, bytes) {
+  let hash = 2166136261 ^ bytes.length;
+  const step = Math.max(1, Math.floor(bytes.length / 4096));
+  for (let i = 0; i < bytes.length; i += step) {
+    hash ^= bytes[i];
+    hash = Math.imul(hash, 16777619);
+  }
+  return kind + ":" + bytes.length + ":" + (hash >>> 0).toString(36);
+}
+
+function decodedMedia(kind, bytes, decode) {
+  const key = contentKey(kind, bytes);
+  const hit = DECODED_LRU.get(key);
+  if (hit !== undefined) {
+    // Refresh the entry's place in the LRU.
+    DECODED_LRU.delete(key);
+    DECODED_LRU.set(key, hit);
+    return hit.url;
+  }
+  const url = decode();
+  if (!url) return null;
+  DECODED_LRU.set(key, { url, size: url.length + bytes.length });
+  decodedCacheBytes += url.length + bytes.length;
+  while (DECODED_LRU.size > DECODED_MAX_ENTRIES || decodedCacheBytes > DECODED_MAX_BYTES) {
+    const oldest = DECODED_LRU.keys().next().value;
+    if (oldest === undefined) break;
+    const entry = DECODED_LRU.get(oldest);
+    DECODED_LRU.delete(oldest);
+    decodedCacheBytes -= entry.size;
+    if (entry.url.indexOf("blob:") === 0 && typeof URL !== "undefined" && URL.revokeObjectURL) {
+      URL.revokeObjectURL(entry.url);
+    }
+  }
+  return url;
 }
 
 // Blob URLs let Chromium decode the pixels lazily and keep the markup small.

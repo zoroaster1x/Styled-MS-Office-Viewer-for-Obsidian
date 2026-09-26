@@ -94,7 +94,7 @@ class DocumentController {
       pageBackground: this.plugin.settings.pageBackground === "theme" ? "theme" : "white",
       showHeaders: this.plugin.settings.showHeaders !== false,
       showPageNumbers: this.plugin.settings.showPageNumbers !== false,
-      virtualize: this.plugin.settings.virtualizePages !== false,
+      virtualize: this.plugin.settings.virtualizePages === true,
     };
   }
 
