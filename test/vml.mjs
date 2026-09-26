@@ -52,7 +52,8 @@ const doc = new DOMParser().parseFromString(PICT, "application/xml");
 const run = parseVmlRun(doc.documentElement);
 check("the pict parses as a VML run", run && run.type === "vml", run && run.type);
 check("the size comes from the style in points", run && Math.round(run.widthPx) === 267 && Math.round(run.heightPx) === 67, run && `${run.widthPx}x${run.heightPx}`);
-check("a square wrap stays in flow", run && run.anchor === null, JSON.stringify(run && run.anchor));
+check("a text-relative pict flows in its paragraph", run && run.anchor && run.anchor.outOfFlow === false && run.anchor.context === "paragraph",
+  JSON.stringify(run && run.anchor));
 check("the textbox text is collected", run && run.texts.join(" ") === "y2 = 2r0 x", run && run.texts.join(" "));
 
 const host = createContainer();
@@ -68,18 +69,24 @@ renderVml(host, run, {
 const wrapper = host.querySelector(".ov-docx-vml");
 check("the pict wraps in a vml box", Boolean(wrapper), wrapper && wrapper.className);
 const wrapperWidth = wrapper ? Math.round(parseFloat(wrapper.style.width) * 100) / 100 : NaN;
-const wrapperMargin = wrapper ? Math.round(parseFloat(wrapper.style.marginLeft) * 100) / 100 : NaN;
-check("the box takes its size and margins", wrapperWidth === 266.67 && wrapperMargin === 133.33,
+const wrapperLeft = wrapper ? Math.round(parseFloat(wrapper.style.left) * 100) / 100 : NaN;
+const wrapperTop = wrapper ? Math.round(parseFloat(wrapper.style.top) * 100) / 100 : NaN;
+check("the box takes its size and its text-relative offsets", wrapperWidth === 266.67 && wrapperLeft === 133.33 && wrapperTop === 26.67,
   wrapper && wrapper.style.cssText);
+const spacer = host.querySelector(".ov-docx-vml-spacer");
+const spacerHeight = spacer ? Math.round(parseFloat(spacer.style.height) * 100) / 100 : NaN;
+check("a square-wrapped box reserves its room as a float", spacer && spacer.style.float === "left" && spacerHeight === 66.67,
+  spacer && spacer.style.cssText);
 check("the shape draws its outline", Boolean(wrapper && wrapper.querySelector("svg rect")), wrapper && wrapper.innerHTML.slice(0, 120));
 check("the text runs through the document renderer", Boolean(wrapper && wrapper.querySelector(".test-p")), wrapper && wrapper.innerHTML.slice(-160));
 
-// A shape with wrap=none floats: positioned from the style offsets and taking
-// no room in the line.
-const FLOAT = PICT.replace("mso-wrap-style:square", "mso-wrap-style:none");
+// A page-relative vertical floats on the page: absolutely placed from the
+// style offsets and taking no room in the line.
+const FLOAT = PICT.replace("position:absolute", "position:absolute;mso-position-vertical-relative:page;mso-position-horizontal-relative:page");
 const floatDoc = new DOMParser().parseFromString(FLOAT, "application/xml");
 const floatRun = parseVmlRun(floatDoc.documentElement);
-check("wrap none floats the shape", floatRun && floatRun.anchor && floatRun.anchor.outOfFlow === true, JSON.stringify(floatRun && floatRun.anchor));
+check("a page-vertical pict floats", floatRun && floatRun.anchor && floatRun.anchor.outOfFlow === true && floatRun.anchor.context === "page",
+  JSON.stringify(floatRun && floatRun.anchor));
 const floatHost = createContainer();
 renderVml(floatHost, floatRun, {
   theme: null, contentWidthPx: 558, pageMarginLeftPx: 120, pageMarginTopPx: 95,
@@ -88,8 +95,8 @@ renderVml(floatHost, floatRun, {
 const floated = floatHost.querySelector(".ov-docx-vml");
 const floatedLeft = floated ? Math.round(parseFloat(floated.style.left) * 100) / 100 : NaN;
 const floatedTop = floated ? Math.round(parseFloat(floated.style.top) * 100) / 100 : NaN;
-check("a floating pict is absolute", floated && floated.style.position === "absolute", floated && floated.style.position);
-check("a floating pict uses its offsets", floatedLeft === 133.33 && floatedTop === 26.67, floated && floated.style.cssText);
+check("a page-relative pict is absolute", floated && floated.style.position === "absolute", floated && floated.style.position);
+check("a page-relative pict takes the margin off its offsets", floatedLeft === 13.33 && floatedTop === -68.33, floated && floated.style.cssText);
 
 // A group scales its children from the group coordinate space. The child at
 // coordinate 1000 with coordsize 2000 over a 100px box lands at 50px.

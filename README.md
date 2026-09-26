@@ -204,7 +204,7 @@ These are honest gaps, not bugs waiting to be reported:
 - **Animations and transitions** are never played: a reader must not lose content to an effect. The details panel reports what the file declares.
 - **Word's pagination is estimated.** Page breaks come from measured block heights, so a document can come out a page longer or shorter than Word makes it. Page size, margins, headers, footers and page numbers are real, and `PAGE` and `NUMPAGES` fields show the live numbers.
 - **A floating Word shape or text box is drawn in flow** at its anchor paragraph. Its size, fill, outline and text are its own, but it does not push nearby text aside the way Word's absolute anchor does.
-- **VML drawings** (older `.docx` files and the Fallback branch of a shape) are drawn: shapes, groups, lines, text boxes and pictures. Word's own wrap algorithm is approximated, so a legacy floating diagram can sit a little differently from Word.
+- **VML drawings** (older `.docx` files and the Fallback branch of a shape) are drawn: shapes, groups, lines, text boxes and pictures. Text-relative boxes reserve their room and step down the page, square wrap floats beside the text, and page-relative boxes sit on the page. Word's exact float algorithm is approximated, so a page dense with legacy overlays can run a little longer than Word's.
 - **Text columns** are not laid out: a multi-column section reads as one column. Page borders and a drop cap's float are not drawn.
 - **Unusual OMML structures** fall back to their own text rather than disappearing.
 - **Spreadsheet text rotation, images and comments** are not drawn. Rich text runs inside a cell keep the cell's own formatting.
