@@ -629,7 +629,10 @@
   flex-direction: column;
   font-family: Calibri, Carlito, "Segoe UI", sans-serif;
   font-size: 11pt;
-  line-height: 1.35;
+  /* The pagination planner measures a line at 1.18 of the font size, so the
+     page renders at the same ratio; Word's single spacing is about the same
+     for Calibri. */
+  line-height: 1.18;
 }
 
 .ov-theme-surface .ov-docx-page {
