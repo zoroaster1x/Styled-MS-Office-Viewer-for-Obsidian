@@ -80,6 +80,53 @@ check("a square-wrapped box reserves its room as a float", spacer && spacer.styl
 check("the shape draws its outline", Boolean(wrapper && wrapper.querySelector("svg rect")), wrapper && wrapper.innerHTML.slice(0, 120));
 check("the text runs through the document renderer", Boolean(wrapper && wrapper.querySelector(".test-p")), wrapper && wrapper.innerHTML.slice(-160));
 
+// The wrapper is the root shape's own box, so the shape's contents are drawn at
+// its origin. Passing the margins again here doubled every offset and pushed
+// the equation boxes of a real handout off the page.
+const rootShape = wrapper ? wrapper.querySelector(".ov-docx-shape") : null;
+const rootLeft = rootShape ? Math.round(parseFloat(rootShape.style.left) * 100) / 100 : NaN;
+const rootTop = rootShape ? Math.round(parseFloat(rootShape.style.top) * 100) / 100 : NaN;
+check("the root shape draws at the wrapper origin", rootLeft === 0 && rootTop === 0, rootShape && rootShape.style.cssText);
+
+// A top level line writes its ends in points. Its box is the bounding box of
+// the ends and the bars of an equation sheet land where the file puts them.
+const LINE = `<?xml version="1.0"?>
+<w:pict xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"
+        xmlns:v="urn:schemas-microsoft-com:vml">
+  <v:line id="_x0000_s1077" style="position:absolute;left:0;z-index:1;mso-position-horizontal-relative:page" from="105.65pt,17.75pt" to="159.9pt,17.75pt" strokeweight=".96pt"/>
+</w:pict>`;
+const lineDoc = new DOMParser().parseFromString(LINE, "application/xml");
+const lineRun = parseVmlRun(lineDoc.documentElement);
+check("a line takes its box from its ends", lineRun && Math.round(lineRun.offsetPx.left) === 141 && Math.round(lineRun.offsetPx.top) === 24
+  && Math.round(lineRun.widthPx) === 72, lineRun && JSON.stringify(lineRun.offsetPx) + " " + lineRun.widthPx);
+const lineHost = createContainer();
+renderVml(lineHost, lineRun, {
+  theme: null, contentWidthPx: 558, pageMarginLeftPx: 120, pageMarginTopPx: 95,
+  mediaUrl: () => null, parseParagraph: () => null, drawParagraph: () => {},
+});
+const lineWrap = lineHost.querySelector(".ov-docx-vml");
+const lineWrapLeft = lineWrap ? Math.round(parseFloat(lineWrap.style.left) * 100) / 100 : NaN;
+check("a page-relative line takes the margin off its start", lineWrapLeft === 20.87, lineWrap && lineWrap.style.cssText);
+check("the line draws into its box", Boolean(lineWrap && lineWrap.querySelector("svg line")), lineWrap && lineWrap.innerHTML.slice(0, 100));
+
+// A through box takes the paragraph's room: one block spacer stands short by
+// one line, so the paragraph's own text lands under the drawing.
+const THROUGH = PICT.replace('mso-wrap-style:square', 'mso-wrap-style:through');
+const throughDoc = new DOMParser().parseFromString(THROUGH, "application/xml");
+const throughRun = parseVmlRun(throughDoc.documentElement);
+const throughHost = createContainer();
+let taken = 0;
+renderVml(throughHost, throughRun, {
+  theme: null, contentWidthPx: 558, pageMarginLeftPx: 120, pageMarginTopPx: 95, lineHeightPx: 20,
+  mediaUrl: () => null,
+  parseParagraph: () => null, drawParagraph: () => {},
+  takeReserve: () => { const v = 86.67; taken = v; return v; },
+});
+const throughSpacer = throughHost.querySelector(".ov-docx-vml-spacer");
+const throughHeight = throughSpacer ? Math.round(parseFloat(throughSpacer.style.height) * 100) / 100 : NaN;
+check("a through box reserves the paragraph's room", taken === 86.67 && throughSpacer && throughSpacer.style.display === "block" && throughHeight === 66.67,
+  throughSpacer && throughSpacer.style.cssText);
+
 // A page-relative vertical floats on the page: absolutely placed from the
 // style offsets and taking no room in the line.
 const FLOAT = PICT.replace("position:absolute", "position:absolute;mso-position-vertical-relative:page;mso-position-horizontal-relative:page");

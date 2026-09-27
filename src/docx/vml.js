@@ -27,7 +27,7 @@
 // group's coordinate space (often twips), while a top level shape writes points
 // in its style.
 
-const { childrenOf, firstOf, findAll, tagName, attr, attrNs } = require("../shared/xml");
+const { childrenOf, firstOf, findAll, findFirst, tagName, attr, attrNs } = require("../shared/xml");
 const { applyAnchorStyles, makeSvg, svgEl, applySvgFill, applySvgStroke, round1 } = require("./drawing");
 
 const SHAPE_TAGS = new Set(["shape", "rect", "roundrect", "oval", "arc", "curve", "line", "polyline", "group"]);
@@ -47,19 +47,46 @@ function parseVmlRun(node) {
   const root = findRootShape(node);
   if (!root) return null;
   const style = parseStyle(attr(root, "style"));
-  const width = absLength(style.width);
-  const height = absLength(style.height);
-  const left = absLength(style["margin-left"]) || absLength(style.left) || 0;
-  const top = absLength(style["margin-top"]) || absLength(style.top) || 0;
+  const isLine = tagName(root) === "line";
+  let width = absLength(style.width);
+  let height = absLength(style.height);
+  let left = absLength(style["margin-left"]) || absLength(style.left) || 0;
+  let top = absLength(style["margin-top"]) || absLength(style.top) || 0;
+  // A top level VML line writes its ends as lengths in points. Its box is the
+  // bounding box of the two ends, and the from/to points are what the fraction
+  // bars in an equation sheet are: style margins are absent on those shapes.
+  let line = null;
+  if (isLine) {
+    const from = parsePoint(attr(root, "from"));
+    const to = parsePoint(attr(root, "to"));
+    if (from && to) {
+      line = { x1: from.x, y1: from.y, x2: to.x, y2: to.y };
+      left = Math.min(from.x, to.x);
+      top = Math.min(from.y, to.y);
+      width = Math.abs(to.x - from.x);
+      height = Math.abs(to.y - from.y);
+    }
+  }
   // A VML pict is an absolutely positioned overlay anchored to its paragraph.
-  // It never takes room in the line: the paragraphs around it carry whatever
-  // spacing the file gives them, and the shape sits on top exactly where the
-  // style's margins say. Treating the box as flowing content is what pushed
-  // every equation box in the equation sheet down the page.
+  // It never takes room in the line by itself: the wrap type decides whether
+  // the text flows beside it (square, tight), is pushed above and below it
+  // (topAndBottom) or flows through it (none, through).
   const relativeH = (style["mso-position-horizontal-relative"] || "text").toLowerCase();
   const relativeV = (style["mso-position-vertical-relative"] || "text").toLowerCase();
-  // Page-relative axes need the page as the positioning context; the others
-  // are measured from the paragraph.
+  // Word writes the wrap in a w10:wrap child when it is not the default; the
+  // style carries it for shapes edited from the text box tool. A picture with
+  // no wrap information still floats (Word's default for an anchored
+  // picture), while a bare vector shape (the rectangles drawn around an
+  // equation) is an overlay that does not move the text.
+  const wrapEl = firstOf(root, "wrap");
+  const hasPicture = Boolean(findFirst(root, "imagedata"));
+  // A line is never a wrap obstacle: it has no height to reserve, and treating
+  // it as a float moves the text it belongs to.
+  const wrapStyle = isLine ? "none" : (style["mso-wrap-style"]
+    || (wrapEl && attr(wrapEl, "type"))
+    || (hasPicture ? "square" : "none")).toLowerCase();
+  // Page- and margin-relative verticals are placed against the page, not the
+  // paragraph, and reserve nothing in the flow.
   const pageVertical = relativeV === "page" || relativeV === "margin";
   const context = pageVertical ? "page" : "paragraph";
   const texts = [];
@@ -70,12 +97,15 @@ function parseVmlRun(node) {
   return {
     type: "vml",
     node,
+    root,
     widthPx: width || 0,
     heightPx: height || 0,
     texts,
     relativeH,
     relativeV,
-    wrapSquare: (style["mso-wrap-style"] || "").toLowerCase() === "square",
+    wrapStyle,
+    isLine,
+    line,
     offsetPx: { left, top },
     anchor: {
       outOfFlow: pageVertical,
@@ -85,6 +115,17 @@ function parseVmlRun(node) {
       behindDoc: Number(style["z-index"] || 0) < 0,
     },
   };
+}
+
+// "105.65pt,17.75pt" or "1200,300" as a pair of pixel values. A group's child
+// coordinates are unitless; a top level line writes points.
+function parsePoint(value) {
+  const parts = String(value || "").split(",");
+  if (parts.length < 2) return null;
+  const x = absLength(parts[0]);
+  const y = absLength(parts[1]);
+  if (!parts[0].trim() || !parts[1].trim()) return null;
+  return { x, y };
 }
 
 function findRootShape(node) {
@@ -138,72 +179,96 @@ function cssColor(value) {
 // ---------- render ----------
 
 function renderVml(parent, run, opts) {
-  const root = findRootShape(run.node);
+  const root = run.root || findRootShape(run.node);
   if (!root) return;
   const doc = parent.ownerDocument;
   const width = run.widthPx > 0 ? run.widthPx : 160;
   const height = run.heightPx > 0 ? run.heightPx : 0;
   const left = (run.offsetPx && run.offsetPx.left) || 0;
   const top = (run.offsetPx && run.offsetPx.top) || 0;
-  const pageContext = run.anchor && run.anchor.context === "page";
-  const boxLeft = run.relativeH === "page"
-    ? left - (opts.pageMarginLeftPx || 0) - (opts.plannedLeft || 0)
-    : left - (opts.plannedLeft || 0);
+  const marginLeft = opts.pageMarginLeftPx || 0;
+  const marginTop = opts.pageMarginTopPx || 0;
+  const contentWidth = opts.contentWidthPx || 0;
+  // The wrapper is absolute inside the anchor paragraph, whose border box
+  // starts at the text margin, which is also the VML text/column origin. A
+  // page-relative axis counts from the page edge instead, and its wrapper is
+  // appended to the page content element, whose origin is the text margin.
+  const pageVertical = run.relativeV === "page" || run.relativeV === "margin";
+  const pageHost = pageVertical ? (opts.pageHost || null) : null;
+  const cssLeft = run.relativeH === "page" ? left - marginLeft : left;
+  const cssTop = run.relativeV === "page" ? top - marginTop : top;
 
-  // The line keeps the shape's room through a spacer, so a column of boxes
-  // steps down the page the way it does in Word and the reference renderers.
-  // A page-relative vertical is placed on the page instead and reserves
-  // nothing.
-  if (!pageContext) {
-    const spacer = parent.createSpan("ov-docx-vml-spacer");
-    if (run.wrapSquare) {
-      // Square wrap is a float: the lines around the box flow beside it, which
-      // is what puts the Fv' fractions left of the y2 box, while the box takes
-      // no step in the block flow.
+  // The flow effect of the shape. Square and tight wrap float, so the lines
+  // beside the box keep their place (the Fv' fractions left of the y2 box).
+  // topAndBottom pushes the following lines below the shape's bottom edge; the
+  // paragraph carries that height, so two boxes in one paragraph reserve the
+  // taller of the two instead of the sum. None and through let the text pass
+  // under the drawing and reserve nothing.
+  if (!pageVertical) {
+    if (run.wrapStyle === "square" || run.wrapStyle === "tight") {
+      const spacer = parent.createSpan("ov-docx-vml-spacer");
       spacer.style.display = "block";
       spacer.style.width = width + "px";
       spacer.style.height = Math.max(0, height) + "px";
       spacer.style.marginTop = top + "px";
-      const contentWidth = opts.contentWidthPx || 0;
-      if (contentWidth && boxLeft + width / 2 > contentWidth / 2) {
+      if (contentWidth && left + width / 2 > contentWidth / 2) {
+        // A float's own box starts at the paragraph content edge, so its left
+        // margin takes the paragraph indent off, while its right margin needs
+        // no such correction. A negative margin is legal and lets a shape the
+        // file puts past the margin sit there.
         spacer.style.float = "right";
-        spacer.style.marginRight = Math.max(0, contentWidth - (boxLeft + width)) + "px";
+        spacer.style.marginRight = (contentWidth - (left + width)) + "px";
       } else {
         spacer.style.float = "left";
-        spacer.style.marginLeft = Math.max(0, boxLeft) + "px";
+        spacer.style.marginLeft = (left - (opts.plannedLeft || 0)) + "px";
       }
-    } else {
-      // No wrap: the box's own paragraph grows to the shape, and the column of
-      // boxes steps down the page.
-      spacer.style.display = "inline-block";
-      spacer.style.verticalAlign = "top";
-      spacer.style.width = width + "px";
-      spacer.style.height = Math.max(0, top + height) + "px";
-      spacer.style.marginLeft = Math.max(0, boxLeft) + "px";
+      parent.appendChild(spacer);
+    } else if ((run.wrapStyle === "topandbottom" || run.wrapStyle === "through")) {
+      // Top-and-bottom pushes the lines below the box; through lets the text
+      // pass over the drawing, but the reference suites still give the anchor
+      // paragraph the shape's room (a cover canvas would otherwise let the
+      // signature line run through it). One block spacer per paragraph, at the
+      // first such box, so the paragraph's own text lands under it.
+      if (opts.takeReserve) {
+        const room = opts.takeReserve();
+        if (room > 0) {
+          const spacer = parent.createSpan("ov-docx-vml-spacer");
+          spacer.style.display = "block";
+          spacer.style.width = "100%";
+          // The paragraph's own line follows the spacer, so it stands short by
+          // one line and the paragraph still ends at the box's bottom edge.
+          spacer.style.height = Math.max(0, room - (opts.lineHeightPx || 0)) + "px";
+          parent.appendChild(spacer);
+        }
+      } else if (opts.reserve) {
+        opts.reserve(Math.max(0, top + height));
+      }
     }
-    parent.appendChild(spacer);
   }
 
   // The shape itself sits at its own offset, above the line it reserved.
-  const wrapper = parent.createSpan("ov-docx-vml");
+  const wrapper = (pageHost || parent).createSpan("ov-docx-vml");
   wrapper.style.width = width + "px";
   if (height) wrapper.style.height = height + "px";
   wrapper.style.position = "absolute";
-  if (pageContext) {
-    // Page coordinates: the containing block (the page content) starts at the
-    // margin, so a page-relative offset takes the margin off.
-    wrapper.style.left = (run.relativeH === "page" ? left - (opts.pageMarginLeftPx || 0) : left) + "px";
-    wrapper.style.top = (run.relativeV === "page" ? top - (opts.pageMarginTopPx || 0) : top) + "px";
-  } else {
-    wrapper.style.left = boxLeft + "px";
-    wrapper.style.top = top + "px";
-  }
+  wrapper.style.left = cssLeft + "px";
+  wrapper.style.top = cssTop + "px";
   // A negative z-index in the file means behind the text, not behind the page:
   // a real -1 paints under the white page background in CSS and disappears.
   wrapper.style.zIndex = "1";
   if (wrapper.addClass) wrapper.addClass("ov-docx-anchor");
-  parent.appendChild(wrapper);
-  drawShape(root, wrapper, { sx: 1, sy: 1, ox: 0, oy: 0 }, doc, opts);
+  (pageHost || parent).appendChild(wrapper);
+
+  // The wrapper is the root shape's own box: draw its contents at the origin.
+  // Passing the margins again as a root map is what doubled every offset and
+  // pushed the equation boxes off the page.
+  const stroke = vmlStroke(root);
+  if (run.isLine && run.line) {
+    const line = run.line;
+    drawLineBox(wrapper, line.x1 - left, line.y1 - top, line.x2 - left, line.y2 - top, stroke || { color: "#000000", widthPx: 1 }, doc);
+    return;
+  }
+  drawShape(root, wrapper, { sx: 1, sy: 1, ox: 0, oy: 0, root: true }, doc, opts);
 }
 
 function drawShape(shape, container, map, doc, opts) {
@@ -214,10 +279,15 @@ function drawShape(shape, container, map, doc, opts) {
   }
   const style = parseStyle(attr(shape, "style"));
   const box = shapeBox(shape, style, map);
+  const stroke = vmlStroke(shape);
+  if (tag === "line") {
+    drawChildLine(container, shape, map, stroke, doc);
+    return;
+  }
   const host = doc.createElement("div");
   host.className = "ov-docx-shape";
-  host.style.left = box.left + "px";
-  host.style.top = box.top + "px";
+  host.style.left = (map.root ? 0 : box.left) + "px";
+  host.style.top = (map.root ? 0 : box.top) + "px";
   host.style.width = box.width + "px";
   host.style.height = box.height + "px";
   const rotation = parseFloat(style.rotation || "");
@@ -227,11 +297,13 @@ function drawShape(shape, container, map, doc, opts) {
   }
   container.appendChild(host);
 
-  const stroke = vmlStroke(shape);
-  if (tag === "line") {
-    drawLine(host, shape, box, stroke, doc);
+  // A straight connector is a v:shape that references a one dimensional
+  // shapetype; it has no path of its own, so it would otherwise draw nothing.
+  if (vmlOneDimensional(shape)) {
+    drawLineBox(host, 0, 0, box.width, box.height, stroke || { color: "#000000", widthPx: 1 }, doc);
     return;
   }
+
   if (tag === "polyline") {
     drawPolyline(host, shape, box, stroke, doc);
     return;
@@ -301,8 +373,8 @@ function drawGroup(group, container, map, doc, opts) {
   const host = doc.createElement("div");
   host.className = "ov-docx-shape ov-docx-vml-group";
   const box = shapeBox(group, style, map);
-  host.style.left = box.left + "px";
-  host.style.top = box.top + "px";
+  host.style.left = (map.root ? 0 : box.left) + "px";
+  host.style.top = (map.root ? 0 : box.top) + "px";
   host.style.width = (width || box.width) + "px";
   host.style.height = (height || box.height) + "px";
   container.appendChild(host);
@@ -315,11 +387,14 @@ function drawGroup(group, container, map, doc, opts) {
   const originY = parseFloat(coordorigin[1]) || 0;
   const sx = sizeX > 0 ? (width || box.width) / sizeX : 1;
   const sy = sizeY > 0 ? (height || box.height) / sizeY : 1;
+  // Children are placed inside the group's own box, so the group's map origin
+  // does not apply to them; only the coordinate origin and scale do. Carrying
+  // the parent's offset in would offset a nested group's children twice.
   const inner = {
     sx: map.sx * sx,
     sy: map.sy * sy,
-    ox: map.ox + (0 - originX * sx) * map.sx,
-    oy: map.oy + (0 - originY * sy) * map.sy,
+    ox: (0 - originX * sx) * map.sx,
+    oy: (0 - originY * sy) * map.sy,
   };
   for (const child of group.children || []) {
     if (SHAPE_TAGS.has(tagName(child))) drawShape(child, host, inner, doc, opts);
@@ -400,27 +475,54 @@ function drawOutline(host, tag, box, fill, stroke, doc) {
   host.appendChild(svg);
 }
 
-function drawLine(host, shape, box, stroke, doc) {
+// A line child of a group: its endpoints are in the group's coordinate space,
+// not a style box, so the host box is their mapped bounding box and the line
+// keeps its direction inside it.
+function drawChildLine(container, shape, map, stroke, doc) {
   const from = String(attr(shape, "from") || "0,0").split(",").map(Number);
   const to = String(attr(shape, "to") || "0,0").split(",").map(Number);
-  const x1 = from[0] || 0;
-  const y1 = from[1] || 0;
-  const x2 = to[0] || 0;
-  const y2 = to[1] || 0;
+  const x1 = (from[0] || 0) * map.sx + map.ox;
+  const y1 = (from[1] || 0) * map.sy + map.oy;
+  const x2 = (to[0] || 0) * map.sx + map.ox;
+  const y2 = (to[1] || 0) * map.sy + map.oy;
+  const host = doc.createElement("div");
+  host.className = "ov-docx-shape";
+  host.style.left = Math.min(x1, x2) + "px";
+  host.style.top = Math.min(y1, y2) + "px";
+  host.style.width = Math.abs(x2 - x1) + "px";
+  host.style.height = Math.abs(y2 - y1) + "px";
+  container.appendChild(host);
+  drawLineBox(host, x1, y1, x2, y2, stroke, doc);
+}
+
+// Draws a line inside a host whose origin is the line's bounding box.
+function drawLineBox(host, x1, y1, x2, y2, stroke, doc) {
   const width = Math.max(Math.abs(x2 - x1), 1);
   const height = Math.max(Math.abs(y2 - y1), 1);
+  const ox = Math.min(x1, x2);
+  const oy = Math.min(y1, y2);
   const svg = makeSvg(doc, width, height);
-  svg.style.left = (box.width ? 0 : -width / 2) + "px";
-  svg.style.top = (box.height ? 0 : -height / 2) + "px";
+  svg.style.left = "0";
+  svg.style.top = "0";
   const line = svgEl(doc, "line");
-  line.setAttribute("x1", String(x1 - Math.min(x1, x2)));
-  line.setAttribute("y1", String(y1 - Math.min(y1, y2)));
-  line.setAttribute("x2", String(Math.max(x1, x2) - Math.min(x1, x2)));
-  line.setAttribute("y2", String(Math.max(y1, y2) - Math.min(y1, y2)));
+  line.setAttribute("x1", String(x1 - ox));
+  line.setAttribute("y1", String(y1 - oy));
+  line.setAttribute("x2", String(x2 - ox));
+  line.setAttribute("y2", String(y2 - oy));
   line.setAttribute("fill", "none");
   applyVmlStroke(line, stroke || { color: "#000000", widthPx: 1 });
   svg.appendChild(line);
   host.appendChild(svg);
+}
+
+// The shapetype behind a straight connector (Word writes t32) is one
+// dimensional: a v:shape with that type draws a line across its own box.
+function vmlOneDimensional(shape) {
+  const type = String(attr(shape, "type") || "");
+  if (attr(shape, "oned") === "t") return true;
+  if (/t32|t33|t34|t35/.test(type)) return true;
+  const shapetype = firstOf(shape, "shapetype");
+  return Boolean(shapetype && attr(shapetype, "oned") === "t");
 }
 
 function drawPolyline(host, shape, box, stroke, doc) {

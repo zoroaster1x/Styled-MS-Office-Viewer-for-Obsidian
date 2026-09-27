@@ -149,6 +149,11 @@ function createDocxRenderer(opts) {
       // its bold and size as soon as a run sets a font of its own.
       if (entry.rPr) out.rPr = Object.assign({}, out.rPr || {}, entry.rPr);
     }
+    // The run defaults from the style chain, before the paragraph mark's own
+    // rPr is merged. A run inherits the style, not the formatting of the
+    // paragraph mark: Word writes a paragraph mark in Times while its runs
+    // stay in the document's Calibri.
+    out.styleRPr = Object.assign({}, out.rPr || {});
     applyDefaults(out, direct);
     paraCache.set(key, out);
     return out;
@@ -158,13 +163,13 @@ function createDocxRenderer(opts) {
     // The paragraph context is part of the identity: two runs with the same
     // direct formatting resolve differently in a body paragraph and a heading.
     const key = (styleId || "") + "|" + hashProps(direct) + "|"
-      + hashProps(paraResolved && paraResolved.rPr ? paraResolved.rPr : null);
+      + hashProps(paraResolved && paraResolved.styleRPr ? paraResolved.styleRPr : null);
     if (runCache.has(key)) return runCache.get(key);
     const chain = styleChain(styleId, "character");
     const out = {};
     applyDefaults(out, model.styles.docDefaults ? model.styles.docDefaults.rPr : null);
     for (const entry of chain) applyDefaults(out, entry.rPr);
-    if (paraResolved && paraResolved.rPr) applyDefaults(out, paraResolved.rPr);
+    if (paraResolved && paraResolved.styleRPr) applyDefaults(out, paraResolved.styleRPr);
     applyDefaults(out, direct);
     runCache.set(key, out);
     return out;
@@ -273,6 +278,7 @@ function createDocxRenderer(opts) {
     const previousTotal = totalPages;
     currentPage = record.number;
     totalPages = pageRecords.length;
+    currentPageContent = record.content;
     renderBlocks(record.blocks, record.content, {
       state: { page: record, flow: record.content, usedHeight: 0 },
       ctx: { listCounters: new Map(), pageCount: record.number },
@@ -286,6 +292,7 @@ function createDocxRenderer(opts) {
     );
     currentPage = previousPage;
     totalPages = previousTotal;
+    currentPageContent = null;
     record.rendered = true;
   }
 
@@ -382,6 +389,18 @@ function createDocxRenderer(opts) {
     const content = page.createDiv("ov-docx-pagecontent");
     content.style.minHeight = Math.max(60, pageHeightPx - twipToPx(marginTopTw) - twipToPx(marginBottomTw)) + "px";
     const footer = page.createDiv("ov-docx-pagefooter");
+    // The header and footer live in the page margins, not in the body flow:
+    // Word measures the header from the page edge and the footer from the
+    // bottom edge. Letting them take part in the flex column grew the sheet
+    // past its paper size and pushed the first line of every page down.
+    const headerDistanceTw = section.headerTw != null ? section.headerTw : 708;
+    const footerDistanceTw = section.footerTw != null ? section.footerTw : 708;
+    header.style.top = twipToPx(headerDistanceTw) + "px";
+    footer.style.bottom = twipToPx(footerDistanceTw) + "px";
+    header.style.left = twipToPx(marginLeftTw) + "px";
+    header.style.right = twipToPx(marginRightTw) + "px";
+    footer.style.left = twipToPx(marginLeftTw) + "px";
+    footer.style.right = twipToPx(marginRightTw) + "px";
     pagesEl.appendChild(page);
     return { el: page, header, content, footer, minHeight };
   }
@@ -447,6 +466,11 @@ function createDocxRenderer(opts) {
   // ---------- blocks ----------
 
   function renderBlocks(blocks, parent, state) {
+    // A multi-column section is not drawn as columns yet: CSS columns force
+    // equal widths, while the files that use them here (an equation sheet)
+    // state a narrow and a wide column, and a float inside an equal column
+    // would be pushed below its text. The blocks flow in one column, which
+    // keeps every page-relative shape where the file puts it.
     for (const block of blocks) {
       if (destroyed) return;
       if (block.type === "p") renderParagraph(block, parent);
@@ -459,6 +483,7 @@ function createDocxRenderer(opts) {
     const el = parent.createDiv("ov-docx-p");
     applyParagraphStyle(el, props, block);
     if (block.sectionBreak) el.addClass("ov-docx-section-break");
+    if (block.columnBreakBefore) el.addClass("ov-docx-column-break");
     if (hasAnchoredRun(block.runs)) el.addClass("ov-has-anchor");
 
     if (block.numbering) {
@@ -476,12 +501,40 @@ function createDocxRenderer(opts) {
       cursor: 0,
       plannedTop: block.plannedTop || 0,
       blockLeft: parseFloat(el.style.paddingLeft) || 0,
+      reserve: null,
+      takeReserve: null,
     };
+    // A top-and-bottom (or through) VML box pushes the lines of its paragraph
+    // below its bottom edge. The paragraph reserves the tallest box once: one
+    // block spacer at the first box's place, so a shape that shares its
+    // paragraph with a line of text keeps the text under the drawing.
+    let reserved = maxVmlReserve(block.runs);
+    ctx.reserve = (px) => { if (px > reserved) reserved = px; };
+    ctx.takeReserve = () => {
+      const value = reserved;
+      reserved = 0;
+      return value;
+    };
+    // The line the paragraph's own text will follow the spacer with, so the
+    // spacer can stop short by one line and the paragraph still reserves the
+    // box's bottom, not the bottom plus the text.
+    ctx.lineHeightPx = (function () {
+      const declared = el.style.lineHeight;
+      const size = parseFloat(el.style.fontSize) || 16;
+      if (declared) {
+        const value = parseFloat(declared);
+        if (declared.indexOf("px") !== -1) return value;
+        if (value > 0 && value < 5) return value * size;
+        return value;
+      }
+      return size * 1.18;
+    })();
     // A paragraph that tabs past its own width is a layout line (a cover logo,
     // a signature rule). Word lets it overflow the margin; the browser would
     // wrap it at the last tab, so the line is kept whole.
     if (ctx.tabStops.some((stop) => stop.pos > contentWidthPx)) el.style.whiteSpace = "nowrap";
     renderInline(block.runs, el, props, ctx);
+    if (reserved > 0) el.style.minHeight = reserved + "px";
     // A paragraph whose only content is an overlay still occupies its own line
     // in Word, which is what spaces a column of anchored boxes down the page.
     let hasFlow = false;
@@ -592,8 +645,13 @@ function createDocxRenderer(opts) {
       } else if (run.type === "link") {
         renderLink(parent, run.link, paraProps, ctx, state);
       } else if (run.type === "break") {
-        appendBreak(parent);
-        ctx.cursor = 0;
+        // A column break moves to a column of a section this viewer draws as a
+        // single column; breaking the line there would push text down a line
+        // the file never breaks.
+        if (!run.column) {
+          appendBreak(parent);
+          ctx.cursor = 0;
+        }
       } else if (run.type === "tab") {
         i = renderTabGroup(parent, paraProps, ctx, runs, i, state);
       } else if (run.type === "textbox") {
@@ -689,6 +747,9 @@ function createDocxRenderer(opts) {
   }
 
   let currentPage = 1;
+  // The page content element of the page being drawn, so a page-relative VML
+  // overlay can be positioned against the page rather than its paragraph.
+  let currentPageContent = null;
   let totalPages = 1;
 
   let noteCount = 0;
@@ -727,7 +788,7 @@ function createDocxRenderer(opts) {
     const span = parent.createSpan("ov-docx-r");
     if (run.deleted) span.addClass("is-deleted");
     span.setText(run.text);
-    applyRunStyle(span, props);
+    applyRunStyle(span, props, paraProps);
     return measureWidth(run.text, runFontString(props));
   }
 
@@ -787,7 +848,7 @@ function createDocxRenderer(opts) {
     parent.createEl("br");
   }
 
-  function applyRunStyle(el, props) {
+  function applyRunStyle(el, props, paraProps) {
     const styles = {};
     if (props.fontFamilyTheme && model.theme && model.theme.fonts) {
       const minor = model.theme.fonts.minor;
@@ -806,7 +867,17 @@ function createDocxRenderer(opts) {
     if (props.highlight) styles.backgroundColor = props.highlight;
     if (props.shading && props.shading.color) styles.backgroundColor = props.shading.color;
     if (props.letterSpacingPt) styles.letterSpacing = ptToPxLocal(props.letterSpacingPt) + "px";
-    if (props.positionHalfPt) styles.verticalAlign = (props.positionHalfPt / 2) + "px";
+    if (props.positionHalfPt) {
+      // A raised or lowered run must not grow its line. Exact line spacing
+      // clips it the way Word does, so shift the glyphs with a relative
+      // offset, which is out of flow. Auto spacing keeps the vertical-align.
+      if (paraProps && paraProps.lineRule === "exact") {
+        styles.position = "relative";
+        styles.top = (-props.positionHalfPt / 2) + "px";
+      } else {
+        styles.verticalAlign = (props.positionHalfPt / 2) + "px";
+      }
+    }
     if (props.vertAlign === "superscript") styles.verticalAlign = "super";
     else if (props.vertAlign === "subscript") styles.verticalAlign = "sub";
     if (props.vertAlign === "superscript" || props.vertAlign === "subscript") styles.fontSize = "0.72em";
@@ -872,8 +943,11 @@ function createDocxRenderer(opts) {
       contentWidthPx,
       pageMarginLeftPx: twipToPx(marginLeftTw),
       pageMarginTopPx: twipToPx(marginTopTw),
-      plannedTop: (ctx && ctx.plannedTop) || 0,
       plannedLeft: (ctx && ctx.blockLeft) || 0,
+      reserve: ctx && ctx.reserve ? ctx.reserve : null,
+      takeReserve: ctx && ctx.takeReserve ? ctx.takeReserve : null,
+      lineHeightPx: ctx && ctx.lineHeightPx ? ctx.lineHeightPx : 0,
+      pageHost: currentPageContent,
       mediaUrl: (rid) => model.mediaUrl(rid),
       parseParagraph: (el) => require("./parse").parseParagraph(el, model, { listCounters: new Map() }),
       drawParagraph: (block, host) => renderParagraph(block, host),
@@ -893,10 +967,33 @@ function createDocxRenderer(opts) {
     if (run.alt) box.title = run.alt;
   }
 
+  // The tallest text-relative VML box that reserves room in this paragraph.
+  // The renderer draws it as one block spacer at the first such box, and the
+  // page estimate uses the same height.
+  function maxVmlReserve(runs) {
+    let max = 0;
+    const walk = (list) => {
+      for (const run of list || []) {
+        if (!run) continue;
+        if (run.type === "vml" && (run.wrapStyle === "topandbottom" || run.wrapStyle === "through")
+          && run.relativeV !== "page" && run.relativeV !== "margin") {
+          const top = (run.offsetPx && run.offsetPx.top) || 0;
+          const height = Number(run.heightPx) > 0 ? Number(run.heightPx) : 0;
+          max = Math.max(max, top + height);
+        } else if (run.type === "run") {
+          walk(run.runs);
+        } else if (run.type === "link") {
+          walk(run.link.runs);
+        }
+      }
+    };
+    walk(runs);
+    return max;
+  }
+
   // True when a paragraph carries an out-of-flow drawing. The paragraph then
   // becomes the positioning context for the anchors inside it.
-  function hasAnchoredRun(runs) {
-    for (const run of runs || []) {
+  function hasAnchoredRun(runs) {    for (const run of runs || []) {
       if (!run) continue;
       // A page-context anchor is positioned against the page content, so it
       // must not make the paragraph a containing block. A text-relative VML
@@ -1297,6 +1394,25 @@ function createDocxRenderer(opts) {
     return out;
   }
 
+  // Only the text that flows in the paragraph: the text inside a drawing's own
+  // text box is placed by the drawing, so it must not be counted as paragraph
+  // lines by the pagination estimate.
+  function flowText(runs) {
+    let out = "";
+    const walk = (list) => {
+      for (const run of list || []) {
+        if (!run) continue;
+        if (run.type === "text") out += run.text;
+        else if (run.type === "math") out += mathText(run.node);
+        else if (run.type === "run") walk(run.runs);
+        else if (run.type === "link") walk(run.link.runs);
+        else if (run.type === "tab") out += "\t";
+      }
+    };
+    walk(runs);
+    return out;
+  }
+
   // ---------- outline ----------
 
   function buildOutline() {
@@ -1349,7 +1465,7 @@ function createDocxRenderer(opts) {
     const lineFactor = props.lineHeight && props.lineHeight > 1 ? props.lineHeight : 1.18;
     const baseLine = props.lineHeightPt ? ptToPxLocal(props.lineHeightPt) : ptToPxLocal(fontPt) * lineFactor;
     const linePx = snappedLine(baseLine, props);
-    const text = plainText(runs).replace(/\u00ad/g, "");
+    const text = flowText(runs).replace(/\u00ad/g, "");
     const leftIndent = (props.indentLeftTw ? twipToPx(props.indentLeftTw) : 0) + (props.indentHangingTw ? twipToPx(props.indentHangingTw) : 0);
     const rightIndent = props.indentRightTw ? twipToPx(props.indentRightTw) : 0;
     const available = Math.max(40, contentWidthPx - leftIndent - rightIndent);
@@ -1365,6 +1481,8 @@ function createDocxRenderer(opts) {
     // A paragraph can hold a picture or a text box, and those occupy their own
     // height. Without this a page of images would be counted as a page of text.
     let contentHeight = lines * linePx;
+    let reserve = 0;
+    let imageHeight = 0;
     for (const run of runs) {
       const blocks = run.type === "run" ? run.runs : [run];
       for (const inner of blocks || []) {
@@ -1373,12 +1491,27 @@ function createDocxRenderer(opts) {
           // A DrawingML overlay takes no room in the page plan; an in-flow VML
           // box does, and its height is what spaces the page.
           if (inner.anchor && inner.anchor.outOfFlow) continue;
+          if (inner.type === "vml") {
+            // Match the renderer: only a top-and-bottom or through box
+            // reserves its height. A float or a bare overlay adds nothing.
+            if (inner.wrapStyle !== "topandbottom" && inner.wrapStyle !== "through") continue;
+            if (inner.relativeV === "page" || inner.relativeV === "margin") continue;
+          }
           const top = (inner.offsetPx && inner.offsetPx.top) || 0;
-          const imageHeight = Number(inner.heightPx) > 0 ? Number(inner.heightPx) + top : 0;
-          const imageLines = Number(inner.heightPx) > 0 ? Math.ceil(imageHeight / Math.max(1, linePx)) : 0;
-          contentHeight = Math.max(contentHeight, imageHeight + 4, imageLines * linePx);
+          const height = Number(inner.heightPx) > 0 ? Number(inner.heightPx) + top : 0;
+          if (inner.type === "vml") reserve = Math.max(reserve, height);
+          else imageHeight = Math.max(imageHeight, height);
         }
       }
+    }
+    if (reserve > 0) {
+      // One block spacer reserves the tallest box; the paragraph's own lines
+      // then follow it, and the first of them sits inside the reserved band.
+      contentHeight = reserve + Math.max(0, lines - 1) * linePx;
+    }
+    if (imageHeight > 0) {
+      const imageLines = Math.ceil(imageHeight / Math.max(1, linePx));
+      contentHeight = Math.max(contentHeight, imageHeight + 4, imageLines * linePx);
     }
     const before = props.spaceBeforePt != null && props.spaceBeforePt > 0 ? ptToPxLocal(props.spaceBeforePt) : 0;
     const after = props.spaceAfterPt != null && props.spaceAfterPt > 0 ? ptToPxLocal(props.spaceAfterPt) : 0;
@@ -1452,6 +1585,18 @@ function createDocxRenderer(opts) {
       const total = metrics.before + metrics.height + metrics.after;
       const forced = block.props && block.props.pageBreakBefore;
       const nextTotal = blocks[i + 1] ? blockTotal(blocks[i + 1]) : 0;
+      // A new section starts on a fresh page unless the section says it is
+      // continuous. Word stores that in the new section's own sectPr, and the
+      // default when it is absent is nextPage.
+      const sectionIndex = block.section != null ? block.section : 0;
+      const previous = i > 0 ? blocks[i - 1] : null;
+      const previousSection = previous ? (previous.section != null ? previous.section : 0) : -1;
+      if (previous && sectionIndex !== previousSection) {
+        const sectionProps = (model.sectionList && model.sectionList[sectionIndex]) || {};
+        if ((sectionProps.type || "nextPage") !== "continuous" && (current.length || used > 0)) {
+          nextPage();
+        }
+      }
       if (forced && (current.length || used > 0)) nextPage();
       // keepNext: this block must share its page with the one after it.
       if (block.props && block.props.keepNext && current.length

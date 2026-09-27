@@ -623,6 +623,7 @@
   background: #ffffff;
   color: #000000;
   box-sizing: border-box;
+  position: relative;
   margin: 0 auto 18px;
   box-shadow: 0 1px 5px rgba(0, 0, 0, 0.28);
   display: flex;
@@ -648,10 +649,21 @@
   position: relative;
 }
 
+/* A section with more than one column. The browser balances the columns and
+   honors the file's own column breaks. */
+.ov-docx-columns {
+  display: block;
+}
+
+.ov-docx-column-break {
+  break-before: column;
+}
+
 .ov-docx-pageheader,
 .ov-docx-pagefooter {
   color: #555555;
   font-size: 9pt;
+  position: absolute;
   flex: 0 0 auto;
 }
 

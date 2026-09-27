@@ -215,6 +215,32 @@ check("the anchor uses its horizontal offset", anchored && anchored.style.left =
 check("the anchor uses its vertical offset", anchored && anchored.style.top === "48px", anchored && anchored.style.top);
 check("the anchor paragraph is the positioning context", Boolean(anchorHost.querySelector(".ov-docx-p.ov-has-anchor")));
 
+// A section break starts a fresh page unless its own sectPr says continuous.
+// The type lives in the new section's properties, and its absence means
+// nextPage, which is what puts a cover sheet before a table of contents.
+function pagesForSectionType(type) {
+  const body = [para("cover"), para("contents")];
+  body[0].section = 0;
+  body[1].section = 1;
+  const sectionModel = Object.assign({}, model, {
+    body,
+    sectionList: [{}, type ? { type } : {}],
+  });
+  let count = 0;
+  const host = createContainer();
+  const renderer = createDocxRenderer({
+    container: host,
+    model: sectionModel,
+    settings: { zoom: 1 },
+    onReady: (info) => { count = info.pageCount || 0; },
+  });
+  renderer.destroy();
+  return count;
+}
+check("a nextPage section starts a new page", pagesForSectionType("nextPage") === 2, String(pagesForSectionType("nextPage")));
+check("a section without a type starts a new page", pagesForSectionType(null) === 2, String(pagesForSectionType(null)));
+check("a continuous section keeps the same page", pagesForSectionType("continuous") === 1, String(pagesForSectionType("continuous")));
+
 console.log("");
 console.log("docx-layout:", pass, "pass,", fail, "fail");
 process.exit(fail ? 1 : 0);
