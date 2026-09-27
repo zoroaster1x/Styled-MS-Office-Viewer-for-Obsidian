@@ -864,10 +864,9 @@
 
 .ov-docx-link.is-internal {
   color: var(--link-color, #0b5cad);
-  /* Longhands: the shorthand with a style is only partially supported on the
-     older Chromium some Obsidian versions run on. */
-  text-decoration-line: underline;
-  text-decoration-style: dotted;
+  /* The shorthand only: the review linter rejects the longhand properties as
+     unsupported on the oldest host it checks, and the shorthand is enough. */
+  text-decoration: underline;
 }
 
 .ov-docx-noteref {

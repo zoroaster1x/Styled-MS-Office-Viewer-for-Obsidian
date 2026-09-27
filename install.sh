@@ -1,13 +1,30 @@
 #!/usr/bin/env bash
-# Installs Office Viewer into an Obsidian vault.
+# Styled MS Office Viewer, an Obsidian plugin that renders Office documents
+# (xlsx, docx, pptx and their relatives) with their real styling, read only.
+#
+# Copyright (C) 2026 Zoroaster1x
+#
+# This program is free software: you can redistribute it and/or modify it under
+# the terms of the GNU General Public License as published by the Free Software
+# Foundation, either version 3 of the License, or (at your option) any later
+# version.
+#
+# This program is distributed in the hope that it will be useful, but WITHOUT
+# ANY WARRANTY; without even the implied warranty of MERCHANTABILITY or FITNESS
+# FOR A PARTICULAR PURPOSE. See the GNU General Public License for more
+# details.
+#
+# You should have received a copy of the GNU General Public License along with
+# this program. If not, see <https://www.gnu.org/licenses/>.
+
 #
 # Usage:
 #   ./install.sh /path/to/YourVault
 #   ./install.sh /path/to/YourVault --no-build
 #
 # The vault must already exist and contain a .obsidian folder. Open the vault
-# once in Obsidian if it does not. This script only copies files and never
-# touches the documents in the vault.
+# once in Obsidian if it does not. This script only copies the plugin files; it
+# never touches the documents in the vault.
 
 set -euo pipefail
 
@@ -54,7 +71,7 @@ if [ "$NO_BUILD" != "--no-build" ]; then
 	fi
 fi
 
-DEST="$VAULT/.obsidian/plugins/office-viewer"
+DEST="$VAULT/.obsidian/plugins/styled-ms-office-viewer"
 mkdir -p "$DEST"
 cp main.js manifest.json styles.css "$DEST/"
 if [ -f versions.json ]; then
@@ -62,12 +79,13 @@ if [ -f versions.json ]; then
 fi
 
 echo
-echo "Installed Office Viewer to:"
+echo "Installed Styled MS Office Viewer to:"
 echo "  $DEST"
 echo
 echo "Next steps in Obsidian:"
 echo "  1. Settings -> Community plugins -> make sure Restricted mode is off."
-echo "  2. If XLSX Styled Viewer is still enabled, disable it: both plugins"
-echo "     claim .xlsx and .xlsm, and only one can open them."
+echo "  2. If XLSX Styled Viewer or another office viewer is still enabled,"
+echo "     disable it: both plugins claim .xlsx and .xlsm, and only one can"
+echo "     open a file."
 echo "  3. Click the reload icon next to Installed plugins."
-echo "  4. Enable 'Office Viewer' and open a document."
+echo "  4. Enable 'Styled MS Office Viewer' and open a document."

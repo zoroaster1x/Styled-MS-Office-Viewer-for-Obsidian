@@ -2,7 +2,7 @@ name: Tests
 
 # Runs when the code, the build or the suites change. A commit that only
 # touches the README does not need a build and a full suite on every push;
-# the release workflow still tests the bundle it publishes from a tag.
+# the release workflow still tests the bundle it publishes.
 # workflow_dispatch keeps a manual run possible.
 
 on:

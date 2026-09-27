@@ -270,3 +270,10 @@ A key that is unset skips its checks with a notice. A key that is set but points
 * Subject: plain and descriptive, no `feat:` or `docs:` prefixes, no emoji.
 * Body: terse bullets with a component prefix, one line each, only when the change needs one.
 * One logical change per commit. Push only when asked, and then push.
+
+## 11. Releases
+
+* **A release is cut by CI, never by hand.** Bump the version in `manifest.json`, `package.json` and `versions.json`, then make the head commit with the marker in its message: `Styled MS Office Viewer 2.1.1 [release] 2.1.1`. The marker version must equal `manifest.json`.
+* The Release workflow builds, runs the suites, generates the notes from every commit since the previous release tag followed by `.github/release-template.md` (which carries the funding block), attests the provenance of `main.js`, `manifest.json` and `styles.css`, then publishes the release with those three assets only. `versions.json` stays in the repository and is never a release asset.
+* A push without the marker builds and tests only, which is the normal case. `workflow_dispatch` cuts a release for the current `manifest.json` version.
+* Manual fallback, only when CI cannot run: `gh release create 2.1.1 --target master main.js manifest.json styles.css` (attestation is then missing, so say so in the report).
