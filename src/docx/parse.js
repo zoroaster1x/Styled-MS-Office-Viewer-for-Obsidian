@@ -187,28 +187,38 @@ function parseBlockChildren(parent, model, ctx, depth) {
 // planner can honour both halves.
 function splitAtPageBreaks(block) {
   if (!block || block.type !== "p" || !block.runs || !block.runs.length) return [block];
-  if (!block.runs.some((run) => containsPageBreak(run))) return [block];
+  const hasPage = block.runs.some((run) => containsPageBreak(run));
+  const hasColumn = block.runs.some((run) => containsColumnBreak(run));
+  if (!hasPage && !hasColumn) return [block];
   const out = [];
   let current = [];
-  const flush = (breakAfter) => {
-    out.push(Object.assign({}, block, { runs: current, pageBreakAfter: breakAfter }));
+  let columnBefore = false;
+  const flush = (breakAfter, columnNext) => {
+    out.push(Object.assign({}, block, { runs: current, pageBreakAfter: breakAfter, columnBreakBefore: columnBefore }));
     current = [];
+    columnBefore = Boolean(columnNext);
   };
-  for (const run of block.runs) {
+  const walk = (run) => {
     if (isPageBreak(run)) {
-      flush(true);
-      continue;
+      flush(true, false);
+      return;
     }
-    if (containsPageBreak(run)) {
-      for (const inner of run.runs || []) {
-        if (isPageBreak(inner)) flush(true);
-        else current.push(inner);
-      }
-      continue;
+    if (isColumnBreak(run)) {
+      // A column break at the very start moves the whole paragraph to the next
+      // column; one in the middle ends the block and the rest opens the next
+      // column.
+      if (current.length) flush(false, true);
+      else columnBefore = true;
+      return;
+    }
+    if (run.type === "run") {
+      for (const inner of run.runs || []) walk(inner);
+      return;
     }
     current.push(run);
-  }
-  if (current.length || !out.length) flush(false);
+  };
+  for (const run of block.runs) walk(run);
+  if (current.length || !out.length) flush(false, false);
   return out;
 }
 
@@ -216,10 +226,21 @@ function isPageBreak(run) {
   return Boolean(run && run.type === "break" && run.page);
 }
 
+function isColumnBreak(run) {
+  return Boolean(run && run.type === "break" && run.column);
+}
+
 function containsPageBreak(run) {
   if (!run) return false;
   if (isPageBreak(run)) return true;
   if (run.type === "run") return (run.runs || []).some(containsPageBreak);
+  return false;
+}
+
+function containsColumnBreak(run) {
+  if (!run) return false;
+  if (isColumnBreak(run)) return true;
+  if (run.type === "run") return (run.runs || []).some(containsColumnBreak);
   return false;
 }
 
