@@ -108,6 +108,34 @@ console.log("--- windowed rendering ---");
   renderer.destroy();
 }
 
+console.log("--- an incremental scroll matches a fresh render ---");
+
+{
+  const cellsOf = (host) => Array.from(host.querySelectorAll(".xlsx-cell"))
+    .map((el) => el.dataset.r + ":" + el.dataset.c).sort().join(" ");
+  const model = makeBigSheet(400, 12);
+  const { host, renderer } = mount(model);
+  const scroller = host.querySelector(".xlsx-sheet-scroll");
+  const start = cellsOf(host);
+  const steps = [400, 900, 1800, 3000, 6000, 9000, 6000, 3000, 1800, 900, 400, 0];
+  for (const top of steps) {
+    scroller.scrollTop = top;
+    scroller.dispatchEvent(new globalThis.Event("scroll"));
+    await new Promise((resolve) => setTimeout(resolve, 25));
+  }
+  const scrolled = cellsOf(host);
+  check("scrolling down and back leaves exactly the original cells", scrolled === start,
+    "built " + scrolled.split(" ").length + " cells, wanted " + start.split(" ").length);
+
+  const fresh = mount(model);
+  check("that window matches a fresh render", cellsOf(fresh.host) === scrolled, "differs from a fresh mount");
+  const heads = host.querySelectorAll(".xlsx-row-head").length;
+  const freshHeads = fresh.host.querySelectorAll(".xlsx-row-head").length;
+  check("row heads are not duplicated", heads === freshHeads, heads + " vs " + freshHeads);
+  renderer.destroy();
+  fresh.renderer.destroy();
+}
+
 console.log("--- selection tint survives a rebuild ---");
 
 {

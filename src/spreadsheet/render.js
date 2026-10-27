@@ -107,6 +107,10 @@ function createRenderer(opts) {
   let windowStart = 0;
   let windowEnd = 0;
   let scrollPending = false;
+  // One list of elements per built row, so a scroll can take away only the
+  // rows that left the window.
+  let rowNodes = new Map();
+  let gridCtx = null;
   let styleCache = new Map();
   let displayCache = new Map();
   let measureCanvas = null;
@@ -644,6 +648,8 @@ function createRenderer(opts) {
       const j = G.visColIndex.get(c);
       return j == null ? null : rowHeaderW + gutter + G.colLeftData[j];
     };
+    // What a row needs to build itself later, when a scroll moves the window.
+    gridCtx = { showHeaders, gutter, rowHeaderW, colHeaderH, colBase, freezeRows, freezeCols, rowTopOf, colLeftOf };
 
     // Column headers and row headers.
     if (showHeaders) {
@@ -682,36 +688,13 @@ function createRenderer(opts) {
       }
     }
 
+    rowNodes = new Map();
     const headerRows = [];
     for (let i = 0; i < Math.min(freezeRows, G.visRows.length); i++) headerRows.push(i);
     for (let i = windowStart; i < windowEnd; i++) {
       if (i >= Math.min(freezeRows, G.visRows.length)) headerRows.push(i);
     }
-    for (const i of headerRows) {
-      const r = G.visRows[i];
-      const rowHead = doc.createElement("div");
-      if (showHeaders) {
-        rowHead.className = "xlsx-row-head";
-        rowHead.textContent = String(r);
-        rowHead.style.gridColumn = String(gutter + 1);
-        rowHead.style.gridRow = String(i + 2);
-        rowHead.style.position = "sticky";
-        rowHead.style.left = "0";
-        rowHead.style.zIndex = String(r <= freezeRows ? Z.frozenHead : Z.scrollHead);
-        if (r <= freezeRows) rowHead.style.top = (colHeaderH + G.rowTopData[i]) + "px";
-        const rowHandle = doc.createElement("div");
-        rowHandle.className = "xlsx-row-resize";
-        rowHandle.title = "Drag to set the row height, double click to fit the text";
-        rowHandle.addEventListener("mousedown", (ev) => startRowResize(ev, r, i));
-        rowHandle.addEventListener("dblclick", (ev) => {
-          ev.preventDefault();
-          ev.stopPropagation();
-          autoFitRow(r);
-        });
-        rowHead.appendChild(rowHandle);
-        frag.appendChild(rowHead);
-      }
-    }
+    for (const i of headerRows) buildRow(i, frag);
 
     // Outline gutter buttons.
     if (G.hasRowOutlines) {
@@ -789,17 +772,10 @@ function createRenderer(opts) {
       frag.appendChild(backdrop);
     }
 
-    // Data cells.
+    // The window's rows, frozen band included.
     for (const i of rowOrder) {
-      const r = G.visRows[i];
-      for (let j = 0; j < G.visCols.length; j++) {
-        const c = G.visCols[j];
-        const merge = G.coverMap.get(key(r, c));
-        if (merge && (merge.r1 !== r || merge.c1 !== c)) continue;
-        const r2 = merge ? Math.min(merge.r2, G.maxRow) : r;
-        const c2 = merge ? Math.min(merge.c2, G.maxCol) : c;
-        buildItem(frag, r, c, r2, c2, Boolean(merge), i, j, colBase, gutter, rowHeaderW, colHeaderH, freezeRows, freezeCols, rowTopOf, colLeftOf);
-      }
+      if (rowNodes.has(i)) continue;
+      buildRow(i, frag);
     }
 
     // Rebuild root.
@@ -853,7 +829,7 @@ function createRenderer(opts) {
       scrollPending = false;
       if (destroyed || !scrollEl || !G || !G.computeWindow) return;
       const next = G.computeWindow(scrollEl.scrollTop, scrollEl.clientHeight);
-      if (next.start !== windowStart || next.end !== windowEnd) render(true);
+      if (next.start !== windowStart || next.end !== windowEnd) updateWindow(next);
     });
   }
 
@@ -1057,6 +1033,78 @@ function createRenderer(opts) {
     frag.appendChild(el);
     itemEls.push({ el, r, c, text: disp.text });
     resolveItemEls.set(key(r, c), el);
+  }
+
+  // One row: its head when headers are on, then its cells. The elements are
+  // kept so updateWindow can drop them when the row leaves the viewport.
+  function buildRow(i, target) {
+    const ctx = gridCtx;
+    const r = G.visRows[i];
+    const els = [];
+    if (ctx.showHeaders) {
+      const rowHead = doc.createElement("div");
+      rowHead.className = "xlsx-row-head";
+      rowHead.textContent = String(r);
+      rowHead.style.gridColumn = String(ctx.gutter + 1);
+      rowHead.style.gridRow = String(i + 2);
+      rowHead.style.position = "sticky";
+      rowHead.style.left = "0";
+      rowHead.style.zIndex = String(r <= ctx.freezeRows ? Z.frozenHead : Z.scrollHead);
+      if (r <= ctx.freezeRows) rowHead.style.top = (ctx.colHeaderH + G.rowTopData[i]) + "px";
+      const rowHandle = doc.createElement("div");
+      rowHandle.className = "xlsx-row-resize";
+      rowHandle.title = "Drag to set the row height, double click to fit the text";
+      rowHandle.addEventListener("mousedown", (ev) => startRowResize(ev, r, i));
+      rowHandle.addEventListener("dblclick", (ev) => {
+        ev.preventDefault();
+        ev.stopPropagation();
+        autoFitRow(r);
+      });
+      rowHead.appendChild(rowHandle);
+      target.appendChild(rowHead);
+      els.push(rowHead);
+    }
+    for (let j = 0; j < G.visCols.length; j++) {
+      const c = G.visCols[j];
+      const merge = G.coverMap.get(key(r, c));
+      if (merge && (merge.r1 !== r || merge.c1 !== c)) continue;
+      const r2 = merge ? Math.min(merge.r2, G.maxRow) : r;
+      const c2 = merge ? Math.min(merge.c2, G.maxCol) : c;
+      const before = itemEls.length;
+      buildItem(target, r, c, r2, c2, Boolean(merge), i, j, ctx.colBase, ctx.gutter, ctx.rowHeaderW, ctx.colHeaderH, ctx.freezeRows, ctx.freezeCols, ctx.rowTopOf, ctx.colLeftOf);
+      if (itemEls.length > before) els.push(itemEls[itemEls.length - 1].el);
+    }
+    rowNodes.set(i, els);
+    return els;
+  }
+
+  // A scroll only moves the built rows: the grid already carries a track for
+  // every row, so rows that leave are dropped and rows that arrive are built.
+  // Rebuilding the whole grid costs about a frame per step, which is what made
+  // scrolling long sheets stutter.
+  function updateWindow(next) {
+    if (destroyed || !gridEl || !gridCtx || !G) {
+      render(true);
+      return;
+    }
+    const frozen = Math.min(gridCtx.freezeRows, G.visRows.length);
+    const dropped = new Set();
+    for (const i of Array.from(rowNodes.keys())) {
+      if (i < frozen || (i >= next.start && i < next.end)) continue;
+      for (const el of rowNodes.get(i)) {
+        dropped.add(el);
+        if (el.remove) el.remove();
+        else if (el.parentNode) el.parentNode.removeChild(el);
+      }
+      rowNodes.delete(i);
+    }
+    if (dropped.size) itemEls = itemEls.filter((item) => !dropped.has(item.el));
+    for (let i = Math.max(next.start, frozen); i < next.end; i++) {
+      if (!rowNodes.has(i)) buildRow(i, gridEl);
+    }
+    windowStart = next.start;
+    windowEnd = next.end;
+    restoreSelection();
   }
 
   function findBlocker(r, c) {
