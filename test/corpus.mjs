@@ -115,7 +115,14 @@ for (const [i, file] of files.entries()) {
     failure = failure || "close: " + ((err && err.message) || String(err));
   }
   rows.push({ path: file.path, ext: file.ext, bytes: size, ms, error, failure });
-  if ((i + 1) % 25 === 0) console.log("  " + (i + 1) + "/" + files.length);
+  // One line per file, so a document that hangs names itself instead of
+  // leaving the sweep looking stuck between two progress marks.
+  console.log(
+    String(i + 1).padStart(4) + "/" + files.length +
+    " " + String(ms).padStart(6) + " ms " + (size / 1048576).toFixed(1).padStart(6) + " MB " +
+    (error || failure ? "FAIL " + (error || failure).slice(0, 60) : "ok   ") +
+    " " + file.path.replace(folder, ""),
+  );
 }
 
 const failed = rows.filter((r) => r.error || r.failure);
