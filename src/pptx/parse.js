@@ -1206,7 +1206,10 @@ function parseRunProps(rPr, ctx) {
   const i = attrInt(rPr, "i", null);
   if (i != null) out.italic = i === 1;
   out.underline = attr(rPr, "u") || null;
-  out.strike = attr(rPr, "strike") || null;
+  // PowerPoint writes strike="noStrike" on runs without a strike, and that
+  // value is truthy, so it has to be dropped or every run is struck through.
+  const strike = attr(rPr, "strike");
+  out.strike = strike && strike !== "noStrike" ? strike : null;
   const baseline = attrInt(rPr, "baseline", null);
   if (baseline != null) out.baseline = baseline / 1000;
   const caps = attr(rPr, "cap") || null;
@@ -1401,7 +1404,18 @@ function parseGradient(grad, ctx) {
     return { type: "gradient", stops, angleDeg: attrInt(lin, "ang", 0) / 60000, scaled: attrBool(lin, "scaled", false) };
   }
   if (path) {
-    return { type: "gradient", stops, path: attr(path, "path") || "circle", fillToRect: firstOf(path, "fillToRect") };
+    const fillToRect = firstOf(path, "fillToRect");
+    return {
+      type: "gradient",
+      stops,
+      path: attr(path, "path") || "circle",
+      fillToRect: fillToRect ? {
+        l: attrInt(fillToRect, "l", 0) / 100000,
+        t: attrInt(fillToRect, "t", 0) / 100000,
+        r: attrInt(fillToRect, "r", 0) / 100000,
+        b: attrInt(fillToRect, "b", 0) / 100000,
+      } : null,
+    };
   }
   return { type: "gradient", stops, angleDeg: 0 };
 }
