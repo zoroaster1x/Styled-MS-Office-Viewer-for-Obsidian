@@ -22,12 +22,9 @@
 // DeckCraft's, shape by shape. Pixels say something looks wrong; this says
 // which shape is out of place and by how many points.
 //
-// DeckCraft has to be running with its control channel:
+// No window is needed: `deckcraft-cli run` inspects a deck headlessly.
 //
-//   xvfb-run -a deckcraft --control 7979 deck.pptx &
 //   bun test/oracle-structure.mjs deck.pptx --slides 1,5,12
-//
-// Then quit it with `deckcraft-cli app --method app.quit`.
 //
 // Boxes are slide points. Our parser keeps EMU, so 12700 EMU is one point.
 
@@ -50,33 +47,33 @@ if (!file) {
   console.log("usage: bun test/oracle-structure.mjs <deck.pptx> [--slides 1,2] [--port 7979] [--tolerance 2]");
   process.exit(2);
 }
-const port = valueOf("--port", "7979");
 const tolerance = Number(valueOf("--tolerance", "2"));
 const only = valueOf("--slides", "");
+const quiet = args.includes("--quiet");
+const verbose = args.includes("--verbose");
 
-// Commands run through engine.execute; control methods are called directly.
-function deckcraft(method, params, command) {
-  const argv = command
-    ? ["app", "--port", port, "--method", "engine.execute", JSON.stringify({ command: method, params: params || {} })]
-    : ["app", "--port", port, "--method", method, JSON.stringify(params || {})];
-  const call = spawnSync("deckcraft-cli", argv, { encoding: "utf8" });
+// One headless run inspects every slide we care about.
+function inspectSlides(filePath, indices) {
+  const argv = ["run", "--in", filePath, "--print"];
+  for (const index of indices) argv.push("--cmd", 'slide.inspect={"index":' + index + "}");
+  const call = spawnSync("deckcraft-cli", argv, { encoding: "utf8", timeout: 600000 });
   if (call.status !== 0) return null;
-  try {
-    return JSON.parse(call.stdout);
-  } catch (err) {
-    return null;
+  const out = new Map();
+  for (const line of String(call.stdout || "").split("\n")) {
+    const at = line.indexOf("\u2192 ");
+    if (at === -1) continue;
+    try {
+      const slide = JSON.parse(line.slice(at + 2));
+      if (slide && typeof slide.index === "number") out.set(slide.index, slide);
+    } catch (err) {
+      // A line that is not a slide reply is not ours.
+    }
   }
-}
-
-const probe = deckcraft("document.inspect", {});
-if (!probe) {
-  console.log("skip: no DeckCraft app on port " + port + " (start one with --control)");
-  process.exit(0);
+  return out;
 }
 
 const EMU_PER_POINT = 12700;
 const model = parsePptx(new Uint8Array(readFileSync(file)));
-const indexed = probe.slides.map((s) => s.index);
 const wanted = only
   ? only.split(",").map(Number)
   : model.slides.map((_, i) => i + 1);
@@ -94,9 +91,17 @@ function centre(box) {
   return [box[0] + box[2] / 2, box[1] + box[3] / 2];
 }
 
-console.log("deck", file.split("/").pop());
-console.log("");
-console.log("slide  ref/ours  matched  max Δpt  mean Δpt  text differ");
+const inspected = inspectSlides(file, wanted.map((n) => n - 1)) || new Map();
+if (!inspected.size) {
+  console.log("skip: DeckCraft could not inspect this deck");
+  process.exit(0);
+}
+
+if (!quiet) {
+  console.log("deck", file.split("/").pop());
+  console.log("");
+  console.log("slide  ref/ours  matched  max Δpt  mean Δpt  text differ");
+}
 
 let totalShapes = 0;
 let totalMatched = 0;
@@ -104,8 +109,7 @@ let totalTextDiff = 0;
 let worst = { delta: 0 };
 
 for (const slideNo of wanted) {
-  if (!indexed.includes(slideNo - 1)) continue;
-  const ref = deckcraft("slide.inspect", { index: slideNo - 1 }, true);
+  const ref = inspected.get(slideNo - 1);
   if (!ref || !ref.shapes) continue;
   const ours = model.slides[slideNo - 1];
   const ourShapes = (ours ? ours.shapes : []).filter((s) => s && typeof s.xEmu === "number");
@@ -121,13 +125,28 @@ for (const slideNo of wanted) {
     const [cx, cy] = centre(shape.box);
     let best = -1;
     let bestDist = Infinity;
-    for (let i = 0; i < ourShapes.length; i++) {
-      if (taken.has(i)) continue;
-      const [ox, oy] = centre(boxOf(ourShapes[i]));
-      const dist = Math.hypot(ox - cx, oy - cy);
-      if (dist < bestDist) {
-        bestDist = dist;
-        best = i;
+    // The name is the reliable key: two shapes at the same spot are otherwise
+    // easy to pair the wrong way round, which reads as a placement bug.
+    if (shape.name) {
+      const sameName = [];
+      for (let i = 0; i < ourShapes.length; i++) {
+        if (!taken.has(i) && ourShapes[i].name === shape.name) sameName.push(i);
+      }
+      if (sameName.length === 1) {
+        best = sameName[0];
+        const [ox, oy] = centre(boxOf(ourShapes[best]));
+        bestDist = Math.hypot(ox - cx, oy - cy);
+      }
+    }
+    if (best === -1) {
+      for (let i = 0; i < ourShapes.length; i++) {
+        if (taken.has(i)) continue;
+        const [ox, oy] = centre(boxOf(ourShapes[i]));
+        const dist = Math.hypot(ox - cx, oy - cy);
+        if (dist < bestDist) {
+          bestDist = dist;
+          best = i;
+        }
       }
     }
     // A shape further than a third of the slide away is not the same shape.
@@ -146,7 +165,14 @@ for (const slideNo of wanted) {
     if (delta > worst.delta) worst = { delta, slide: slideNo, name: shape.name || shape.kind, mine, ref: shape.box };
     const a = clean(shape.text);
     const b = clean(ourShapes[best].text || "");
-    if (a && a !== b) textDiff++;
+    if (a && a !== b) {
+      textDiff++;
+      if (verbose && textDiff <= 12) {
+        console.log("  text differs: slide " + slideNo + " " + (shape.name || shape.kind));
+        console.log("    deckcraft: " + a.slice(0, 100));
+        console.log("    ours     : " + b.slice(0, 100));
+      }
+    }
   }
 
   const counted = ref.shapes.filter((s) => s.box).length;
@@ -155,6 +181,7 @@ for (const slideNo of wanted) {
   totalTextDiff += textDiff;
   const mean = matched ? sumDelta / matched : 0;
   const flag = maxDelta > tolerance || textDiff ? "  <-- review" : "";
+  if (quiet) continue;
   console.log(
     String(slideNo).padStart(5) + "  " + (counted + "/" + ourShapes.length).padStart(8) +
     "  " + String(matched).padStart(7) +
