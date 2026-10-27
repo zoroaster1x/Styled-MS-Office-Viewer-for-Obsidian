@@ -844,8 +844,9 @@ function createRenderer(opts) {
     let spanCols = 0;
     for (let cc = c; cc <= c2; cc++) if (G.visColIndex.has(cc)) spanCols++;
     if (!spanRows || !spanCols) return;
-    el.style.gridRow = (i + 2) + " / span " + spanRows;
-    el.style.gridColumn = (colBase + j + 1) + " / span " + spanCols;
+    // The base placement and fill in one style write: a cell that set twenty
+    // properties one at a time cost more than the node it lives in.
+    const base = ["grid-row:" + (i + 2) + " / span " + spanRows, "grid-column:" + (colBase + j + 1) + " / span " + spanCols];
     if (isMerge) el.classList.add("xlsx-merged");
 
     const style = resolvedStyle(r, c);
@@ -861,14 +862,15 @@ function createRenderer(opts) {
     const stickyTop = r <= freezeRows ? rowTopOf(r) : null;
     const stickyLeft = c <= freezeCols ? colLeftOf(c) : null;
     const isSticky = stickyTop != null || stickyLeft != null;
-    if (stickyTop != null) el.style.top = stickyTop + "px";
-    if (stickyLeft != null) el.style.left = stickyLeft + "px";
+    if (stickyTop != null) base.push("top:" + stickyTop + "px");
+    if (stickyLeft != null) base.push("left:" + stickyLeft + "px");
     // Plain cells stay static and unstacked on purpose: thousands of stacking
     // contexts make scrolling stutter.
 
-    if (fillCss) el.style.backgroundColor = fillCss;
-    else if (isGradient) el.style.backgroundImage = styles.gradientCss(style.fill);
-    else if (isSticky) el.style.backgroundColor = "var(--xlsx-sheet-bg)";
+    if (fillCss) base.push("background-color:" + fillCss);
+    else if (isGradient) base.push("background-image:" + styles.gradientCss(style.fill));
+    else if (isSticky) base.push("background-color:var(--xlsx-sheet-bg)");
+    el.style.cssText = base.join(";");
 
     // Text layout.
     el.style.display = "flex";
