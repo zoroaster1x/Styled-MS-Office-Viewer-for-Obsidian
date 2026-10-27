@@ -36,7 +36,7 @@ const { parseStyles } = require("../spreadsheet/styles");
 // ODF keys styles by name. Text and paragraph properties are pre-resolved to
 // the flat property names the renderers use, so no further cascade is needed.
 function parseOdfStyles(pkg) {
-  const styles = { text: new Map(), paragraph: new Map(), table: new Map(), cell: new Map(), columns: new Map(), masterPages: new Map() };
+  const styles = { text: new Map(), paragraph: new Map(), table: new Map(), cell: new Map(), columns: new Map(), rows: new Map(), masterPages: new Map() };
   const collect = (doc) => {
     if (!doc) return;
     const root = doc.documentElement;
@@ -49,6 +49,7 @@ function parseOdfStyles(pkg) {
       else if (family === "table") styles.table.set(name, parseTableProperties(firstOf(el, "table-properties")));
       else if (family === "table-cell") styles.cell.set(name, parseCellProperties(firstOf(el, "table-cell-properties")));
       else if (family === "table-column") styles.columns.set(name, parseColumnProperties(firstOf(el, "table-column-properties")));
+      else if (family === "table-row") styles.rows.set(name, parseRowProperties(firstOf(el, "table-row-properties")));
     }
     for (const el of findAll(root, "master-page")) {
       const name = attr(el, "name");
@@ -198,6 +199,13 @@ function parseColumnProperties(el) {
   return null;
 }
 
+function parseRowProperties(el) {
+  if (!el) return null;
+  const height = odfLengthToPx(attr(el, "row-height"));
+  if (height != null) return { height };
+  return null;
+}
+
 function parseOdfBorder(value) {
   const match = /([\d.]+)(pt|px|cm|mm|in)\s+(solid|dashed|dotted)\s+(#?[0-9a-fA-F]{6}|#[0-9a-fA-F]{3})/.exec(value);
   if (!match) {
@@ -233,14 +241,13 @@ function readOds(input) {
   const content = pkg.xml("content.xml");
   if (!content) throw new Error("This file has no content.xml, so it is not a readable OpenDocument file.");
   const styles = parseOdfStyles(pkg);
-  const spreadsheet = parseOdfSheetStyles(content);
   const body = firstOf(content.documentElement, "body");
   const sheetParent = body ? (firstOf(body, "spreadsheet") || body) : content.documentElement;
   const sheets = [];
   const tables = findAll(sheetParent, "table");
   tables.forEach((tableEl, index) => {
     const name = attr(tableEl, "name") || "Sheet" + (index + 1);
-    sheets.push(parseOdfSheet(tableEl, name, index, styles, spreadsheet));
+    sheets.push(parseOdfSheet(tableEl, name, index, styles));
   });
   const cache = new Map();
   return {
@@ -260,20 +267,7 @@ function readOds(input) {
   };
 }
 
-function parseOdfSheetStyles(content) {
-  const out = { columns: new Map(), rows: new Map() };
-  for (const el of findAll(content.documentElement, "table-column")) {
-    const styleName = attr(el, "style-name");
-    if (styleName) out.columns.set(styleName, el);
-  }
-  for (const el of findAll(content.documentElement, "table-row")) {
-    const styleName = attr(el, "style-name");
-    if (styleName) out.rows.set(styleName, el);
-  }
-  return out;
-}
-
-function parseOdfSheet(tableEl, name, index, styles, spreadsheet) {
+function parseOdfSheet(tableEl, name, index, styles) {
   const rowEls = childrenOf(tableEl, "table-row");
   const cells = new Map();
   const rows = new Map();
@@ -300,8 +294,10 @@ function parseOdfSheet(tableEl, name, index, styles, spreadsheet) {
   rowEls.forEach((rowEl, rowIndex) => {
     const repeat = Math.min(attrInt(rowEl, "number-rows-repeated", 1), 5000);
     const rowStyle = attr(rowEl, "style-name");
+    // ODF keeps a row's height on its table-row style, as a length in the
+    // style's own table-row-properties element.
     const rowProps = rowStyle ? styles.rows.get(rowStyle) : null;
-    const height = rowProps ? odfLengthToPx(attr(firstOf(rowProps, "table-row-properties"), "row-height")) : null;
+    const height = rowProps ? rowProps.height : null;
     const isHeader = attr(rowEl, "default-cell-style-name") === "TableHeading";
     for (let r = 0; r < repeat; r++) {
       const rowNumber = rowIndex + 1 + r;

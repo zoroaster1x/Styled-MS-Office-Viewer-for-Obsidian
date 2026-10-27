@@ -59,7 +59,7 @@ function detectFormat(fileName, bytes) {
   const declared = FORMATS[ext] || null;
   const signature = sniff(bytes);
   if (signature === "zip") {
-    const kind = detectZipKind(bytes);
+    const kind = detectZipKind(bytes, ext);
     if (kind) return { kind, ext, label: declared ? declared.label : kind, trusted: true };
     if (declared && declared.kind !== "unsupported") return { kind: declared.kind, ext, label: declared.label, trusted: true };
     return { kind: "unsupported", ext, label: "Unknown zip package", trusted: false };
@@ -89,7 +89,7 @@ function detectFormat(fileName, bytes) {
   return { kind: "unsupported", ext, label: "Unsupported", trusted: false };
 }
 
-function detectZipKind(bytes) {
+function detectZipKind(bytes, ext) {
   const names = readZipNames(bytes);
   if (!names) return null;
   if (names.indexOf("word/document.xml") !== -1) return "document";
@@ -97,8 +97,11 @@ function detectZipKind(bytes) {
   if (names.indexOf("xl/workbook.xml") !== -1) return "spreadsheet";
   if (names.indexOf("content.xml") !== -1) {
     if (names.indexOf("META-INF/manifest.xml") !== -1) {
-      // ODF: the manifest declares the document class.
-      return "spreadsheet";
+      // ODF: every ODF package holds content.xml, so the extension names the
+      // document class. A package with no usable extension is treated as a
+      // workbook, which is what it was always assumed to be.
+      const odf = { ods: "spreadsheet", odt: "document", odp: "presentation" };
+      return odf[ext] || "spreadsheet";
     }
   }
   return null;
