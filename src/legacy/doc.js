@@ -29,9 +29,11 @@
 // at one contiguous run instead. Formatting runs are not decoded, so this is a
 // text view: paragraphs and their words, no fonts, colours or tables.
 //
-// Page setup also lives in a table this reader does not walk, so the page is an
-// A4 sheet with two centimetre margins; every .doc opens without a crash and
-// reads top to bottom.
+// Page setup lives in a property block at the end of the document stream, a
+// run of (sprm, operand) pairs opened by the page width and height pair; that
+// block supplies the real sheet size, margins and header/footer distances. A
+// file without the block falls back to an A4 sheet with two centimetre
+// margins, so every .doc opens without a crash and reads top to bottom.
 
 const { openCompound } = require("./ole");
 
@@ -114,15 +116,7 @@ function readDoc(bytes) {
   return {
     kind: "doc",
     body,
-    section: {
-      pageWidthTw: 11906,
-      pageHeightTw: 16838,
-      marginTopTw: 1134,
-      marginRightTw: 1134,
-      marginBottomTw: 1134,
-      marginLeftTw: 1134,
-      estimated: true,
-    },
+    section: readSectionGeometry(word),
     styles: { paragraph: new Map(), character: new Map(), table: new Map(), docDefaults: null },
     footnotes: new Map(),
     endnotes: new Map(),
@@ -136,6 +130,64 @@ function readDoc(bytes) {
     paragraphCount: body.filter((block) => block.runs && block.runs.length).length,
     characterCount: text.replace(/\n/g, "").length,
   };
+}
+
+// The page setup: a property block of (sprm, operand) pairs near the end of
+// the document stream. The width pair (sprm 0xb01f) followed by the height
+// pair (sprm 0xb020) marks the block; after it come the left, right, top and
+// bottom margins, an unused zero, and the header and footer distances.
+// Anything implausible falls back to the A4 default.
+function readSectionGeometry(word) {
+  const fallback = {
+    pageWidthTw: 11906,
+    pageHeightTw: 16838,
+    marginTopTw: 1134,
+    marginRightTw: 1134,
+    marginBottomTw: 1134,
+    marginLeftTw: 1134,
+    estimated: true,
+  };
+  const u16 = (at) => word[at] | (word[at + 1] << 8);
+  for (let i = 0; i + 40 <= word.length; i++) {
+    if (word[i] !== 0x1f || word[i + 1] !== 0xb0 || word[i + 4] !== 0x20 || word[i + 5] !== 0xb0) continue;
+    const widthTw = u16(i + 2);
+    const heightTw = u16(i + 6);
+    if (widthTw < 2160 || widthTw > 31680 || heightTw < 2160 || heightTw > 31680) continue;
+    const section = {
+      pageWidthTw: widthTw,
+      pageHeightTw: heightTw,
+      marginTopTw: fallback.marginTopTw,
+      marginRightTw: fallback.marginRightTw,
+      marginBottomTw: fallback.marginBottomTw,
+      marginLeftTw: fallback.marginLeftTw,
+      estimated: true,
+    };
+    // sprm, spra byte, and the field it writes; the fifth slot is an unused
+    // zero that still has to be stepped over.
+    const fields = [
+      [0x21, 0xb0, "marginLeftTw", widthTw],
+      [0x22, 0xb0, "marginRightTw", widthTw],
+      [0x23, 0x90, "marginTopTw", heightTw],
+      [0x24, 0x90, "marginBottomTw", heightTw],
+      [0x25, 0xb0, null, 0],
+      [0x17, 0xb0, "headerTw", heightTw],
+      [0x18, 0xb0, "footerTw", heightTw],
+    ];
+    let at = i + 8;
+    let complete = true;
+    for (const [sprm, spra, key, limit] of fields) {
+      if (word[at] !== sprm || word[at + 1] !== spra) {
+        complete = false;
+        break;
+      }
+      const value = u16(at + 2);
+      if (key && value * 2 <= limit) section[key] = value;
+      at += 4;
+    }
+    if (complete) section.estimated = false;
+    return section;
+  }
+  return fallback;
 }
 
 // The piece table: run of character positions, each mapped to text in the

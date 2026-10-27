@@ -120,7 +120,10 @@ function buildMediaUrl(pkg, path) {
     if (mime === "image/wmf" || /\.wmf$/i.test(path)) {
       return decodedMedia("wmf", bytes, () => metafileToDataUrl(bytes, "wmf"));
     }
-    if (mime === "image/svg+xml") {
+    // Packages sometimes declare the nonstandard "image/svg" content type; the
+    // extension settles it either way, and Chromium refuses anything but the
+    // registered "+xml" spelling.
+    if (/^image\/svg/i.test(mime) || /\.svg$/i.test(path)) {
       return "data:image/svg+xml;charset=utf-8," + encodeURIComponent(new TextDecoder("utf-8").decode(bytes));
     }
     if (mime.indexOf("image/") === 0 || mime.indexOf("audio/") === 0 || mime.indexOf("video/") === 0) {

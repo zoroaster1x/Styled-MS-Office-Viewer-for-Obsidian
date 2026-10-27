@@ -561,9 +561,24 @@ function createPptxRenderer(opts) {
       return color + " " + Math.round(stop.pos * 100) + "%";
     });
     if (fill.path) {
-      return "radial-gradient(circle at center, " + stops.join(", ") + ")";
+      // A path gradient grows out of the fillToRect: the innermost stop fills
+      // that rectangle and the outer stops reach the shape's far corners. Put
+      // the radial centre at the rectangle's centre, which for the common
+      // corner anchor is the corner itself. The default CSS radius, the
+      // farthest corner, is the reach PowerPoint draws.
+      const rect = fill.fillToRect || {};
+      const l = Number(rect.l) || 0;
+      const t = Number(rect.t) || 0;
+      const r = Number(rect.r) || 0;
+      const b = Number(rect.b) || 0;
+      const cx = (l + (1 - l - r) / 2) * 100;
+      const cy = (t + (1 - t - b) / 2) * 100;
+      return "radial-gradient(circle at " + cx + "% " + cy + "%, " + stops.join(", ") + ")";
     }
-    const angle = 90 - (fill.angleDeg || 0);
+    // DrawingML measures the gradient direction clockwise from east, CSS
+    // clockwise from north, so the same direction is ninety degrees further
+    // round; subtracting instead mirrors the wash top to bottom.
+    const angle = ((fill.angleDeg || 0) + 90) % 360;
     return "linear-gradient(" + angle + "deg, " + stops.join(", ") + ")";
   }
 
@@ -805,18 +820,42 @@ function createPptxRenderer(opts) {
       }
       return;
     }
+    if (shape.fillMode === "tile") {
+      // A tiled picture repeats the bitmap at its native size instead of
+      // filling the frame once.
+      el.style.backgroundImage = 'url("' + url + '")';
+      el.style.backgroundRepeat = "repeat";
+      return;
+    }
     const img = doc.createElement("img");
     img.src = url;
     img.alt = shape.alt || "";
     img.style.width = "100%";
     img.style.height = "100%";
-    img.style.objectFit = "cover";
+    // The file stretches the bitmap onto the frame unless it asked for a tile;
+    // a cover fit would crop sides the file never crops. Frames made by
+    // PowerPoint match the bitmap's aspect anyway, so the two only differ for
+    // frames another tool resized, where the file still says stretch.
+    img.style.objectFit = "fill";
     if (shape.crop) {
-      const crop = shape.crop;
-      const scaleX = 1 / Math.max(0.01, 1 - crop.l - crop.r);
-      const scaleY = 1 / Math.max(0.01, 1 - crop.t - crop.b);
-      img.style.transform = "scale(" + scaleX + ", " + scaleY + ")";
-      img.style.transformOrigin = (crop.l > 0 ? "left" : crop.r > 0 ? "right" : "center") + " " + (crop.t > 0 ? "top" : crop.b > 0 ? "bottom" : "center");
+      // A srcRect names the window of the bitmap that the frame shows, and the
+      // window is stretched onto the frame. Size the image so that window
+      // lands exactly on the frame and let the frame clip the rest. Scaling
+      // the image with a transform instead lets it spill over everything drawn
+      // before it and hides the shapes under it.
+      const l = shape.crop.l || 0;
+      const t = shape.crop.t || 0;
+      const r = shape.crop.r || 0;
+      const b = shape.crop.b || 0;
+      const w = Math.max(0.01, 1 - l - r);
+      const h = Math.max(0.01, 1 - t - b);
+      el.style.overflow = "hidden";
+      img.style.objectFit = "fill";
+      img.style.position = "absolute";
+      img.style.width = (100 / w) + "%";
+      img.style.height = (100 / h) + "%";
+      img.style.left = (-(l / w) * 100) + "%";
+      img.style.top = (-(t / h) * 100) + "%";
     }
     img.setAttribute("draggable", "false");
     el.appendChild(img);
