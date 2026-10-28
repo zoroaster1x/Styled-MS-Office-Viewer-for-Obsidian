@@ -45,7 +45,9 @@ const GENERAL = [
   { name: "macOS user path", re: /\/Users\/[a-z0-9._-]+\//i },
   { name: "Windows user path", re: /[A-Z]:\\Users\\/i },
   { name: "private email address", re: /[a-z0-9._%+-]+@(?!example\.|test\.|localhost)[a-z0-9.-]+\.[a-z]{2,}/i },
-  { name: "machine hostname", re: /\b[\w-]+\.(local|lan|home|internal)\b/i },
+  // Lowercase only: a hostname reads linux.local or box.home, while
+  // process.env.HOME and Path.home are code, not a machine.
+  { name: "machine hostname", re: /\b[a-z0-9][a-z0-9-]*\.(local|lan|home|internal)\b/ },
 ];
 
 // Extra patterns from the local, gitignored configuration.
