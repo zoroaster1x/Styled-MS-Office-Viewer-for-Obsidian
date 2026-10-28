@@ -84,8 +84,15 @@ function packageOf(mimetype, body, automaticStyles) {
 const ODT_MIME = "application/vnd.oasis.opendocument.text";
 const odt = packageOf(ODT_MIME, `<office:text>
 <text:p>Hello from a text document.</text:p>
-<text:p>Second paragraph.</text:p>
-</office:text>`);
+<text:p text:style-name="Title">A title with its own style</text:p>
+<text:p>Mixed <text:span text:style-name="Em">content</text:span> here.</text:p>
+</office:text>`, `<style:style style:name="Title" style:family="paragraph">
+<style:paragraph-properties fo:text-align="center"/>
+<style:text-properties fo:font-weight="bold" fo:font-size="28pt"/>
+</style:style>
+<style:style style:name="Em" style:family="text">
+<style:text-properties fo:font-style="italic"/>
+</style:style>`);
 
 check("odt routes to the document reader", detectFormat("notes.odt", odt).kind, "document");
 check("odt keeps its extension", detectFormat("notes.odt", odt).ext, "odt");
@@ -166,6 +173,15 @@ try {
   odtError = err && err.message ? err.message : String(err);
 }
 check("odt parses its paragraphs", Boolean(doc), true);
+// Plain text in ODF is a text node inside the paragraph, not an element: a
+// reader that walks elements alone produces empty paragraphs and a blank page.
+check("odt keeps the paragraph text", (doc.body[0].runs || []).map((run) => run.text).join(""), "Hello from a text document.");
+const titleBlock = doc.body[1];
+check("odt carries the paragraph style onto its runs", Boolean(titleBlock.runs[0].props && titleBlock.runs[0].props.bold), true);
+check("odt keeps the styled size", titleBlock.runs[0].props && titleBlock.runs[0].props.sizeHalfPt, 56);
+const mixed = (doc.body[2].runs || []).map((run) => run.text).join("");
+check("odt keeps text around a span", mixed, "Mixed content here.");
+check("odt keeps the span style", Boolean(doc.body[2].runs[1] && doc.body[2].runs[1].props && doc.body[2].runs[1].props.italic), true);
 
 console.log(`odf: ${pass} pass, ${fail} fail`);
 if (fail) process.exit(1);

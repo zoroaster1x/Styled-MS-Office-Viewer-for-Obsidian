@@ -523,6 +523,12 @@ function findFirstMasterPage(styles) {
   return null;
 }
 
+// ODF collapses whitespace the way HTML does unless a run asks to preserve it;
+// a single space is what the file means, and <text:s> carries the runs of them.
+function collapseOdfSpace(text) {
+  return String(text || "").replace(/[\t\n\r]+/g, " ").replace(/ {2,}/g, " ");
+}
+
 function odfToParagraph(el, styles, isHeading, order) {
   const styleName = attr(el, "style-name");
   const styleProps = styleName ? styles.paragraph.get(styleName) : null;
@@ -535,9 +541,23 @@ function odfToParagraph(el, styles, isHeading, order) {
       props.rPr = { bold: true, sizeHalfPt: level === 1 ? 32 : level === 2 ? 28 : 24 };
     }
   }
+  // A paragraph's own text is a text node, not an element: a file whose
+  // paragraphs are written as <text:p>words</text:p> (which is what every
+  // office suite writes for plain text) has no element children at all, so
+  // walking only elements produced empty paragraphs and a blank page.
+  // The paragraph style's own text properties are the default for every run in
+  // it: ODF keeps a title's bold and size on the paragraph style, not on the
+  // text, and without this a styled paragraph drew as body text.
+  const inheritedRPr = props.rPr || null;
   const runs = [];
-  for (const child of el.children || []) {
-    collectOdfRuns(child, styles, null, runs);
+  const nodes = el.childNodes && el.childNodes.length ? Array.from(el.childNodes) : (el.children || []);
+  for (const node of nodes) {
+    if (node.nodeType === 3 || node.nodeType === 4) {
+      const text = collapseOdfSpace(node.nodeValue || "");
+      if (text) runs.push({ type: "text", text, props: inheritedRPr });
+      continue;
+    }
+    if (node.nodeType === 1) collectOdfRuns(node, styles, inheritedRPr, runs);
   }
   return {
     type: "p",
@@ -560,6 +580,13 @@ function collectOdfRuns(el, styles, inherited, out) {
   if (tag === "span" || tag === "a" || tag === "meta" || tag === "annotation") {
     if (tag === "annotation") return;
     for (const child of el.children || []) collectOdfRuns(child, styles, props, out);
+    // A span can wrap plain text and styled runs together; the plain text is a
+    // text node and would otherwise be dropped.
+    const own = el.childNodes ? Array.from(el.childNodes).filter((n) => n.nodeType === 3) : [];
+    for (const node of own) {
+      const text = collapseOdfSpace(node.nodeValue || "");
+      if (text) out.push({ type: "text", text, props: props || null });
+    }
     return;
   }
   if (tag === "s") {

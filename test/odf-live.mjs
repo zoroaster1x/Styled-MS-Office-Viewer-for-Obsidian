@@ -83,11 +83,38 @@ function convert(file) {
   return { target, out, ok: existsSync(out), log: (run.stderr || "").trim() };
 }
 
+// The first words of the converted file, read straight from its own package, so
+// the render can be checked for content rather than for any particular text.
+const expected = new Map();
+function expectedWords(path) {
+  return expected.get(path) || null;
+}
+function noteExpected(path, ext) {
+  try {
+    const bytes = new Uint8Array(readFileSync(path));
+    if (ext === "ods" || ext === "odt" || ext === "odp") {
+      const { Package } = require("../src/shared/package.js");
+      const pkg = Package.open(bytes);
+      const name = ext === "ods" ? "content.xml" : "content.xml";
+      const xml = pkg.xml(name);
+      const text = xml ? xml.documentElement.textContent || "" : "";
+      const words = text.replace(/\s+/g, " ").trim();
+      const first = words.split(" ").filter((w) => w.length > 3)[0];
+      if (first) expected.set(path, first);
+    }
+  } catch (err) {
+    // No expectation is better than a false one.
+  }
+}
+
 const converted = [];
 for (const file of present) {
   const result = convert(file);
   check("LibreOffice wrote " + basename(result.out), result.ok, result.log || "no output file");
-  if (result.ok) converted.push(result);
+  if (result.ok) {
+    noteExpected(result.out, result.target);
+    converted.push(result);
+  }
 }
 if (!converted.length) {
   console.log("");
@@ -129,9 +156,16 @@ for (const { out } of converted) {
   const total = Math.round(performance.now() - started);
   const error = view.contentEl.querySelector(".ov-message-error");
   check(basename(out) + " opens", !error, error ? error.textContent.trim().slice(0, 120) : "");
-  // A rendered document puts something in the pane beyond the error box.
+  // A page of chrome is not a render: the pane has to carry words from the
+  // file, taken from the reference model so the check is about content, not
+  // about a particular sentence.
   const drawn = view.contentEl.querySelectorAll("*").length;
   check(basename(out) + " draws content", drawn > 20, drawn + " elements");
+  const wanted = expectedWords(out);
+  if (wanted) {
+    const shown = (view.contentEl.textContent || "").replace(/\s+/g, " ");
+    check(basename(out) + " shows its text", shown.indexOf(wanted) !== -1, "no \"" + wanted + "\" in the page");
+  }
   console.log("     " + basename(out) + " opened in " + total + " ms");
   view.onClose();
 }

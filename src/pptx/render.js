@@ -1174,6 +1174,9 @@ function createPptxRenderer(opts) {
   }
 
   function applyRunStyle(span, props, slide, defaultSizePt, scale) {
+    // A run with no formatting of its own (OpenDocument text is the common
+    // case) arrives without props, and every check below reads them.
+    props = props || {};
     // DrawingML baseline is 1000ths of a percent of the font size. The glyphs
     // are also drawn at 58% of the run's size, the proportional height
     // The reference renderers both use; the shift divides by that so it
