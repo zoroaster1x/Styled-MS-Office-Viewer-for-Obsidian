@@ -95,30 +95,40 @@ function mediaUrl(pkg, path, cache) {
   return out;
 }
 
+// A decoder that fails quietly hands back the prefix of a data URL with no
+// payload ("data:image/png;base64,"), which the browser draws as a broken
+// image with the alt text. The caller's named placeholder says more.
+function usableUrl(url) {
+  if (!url) return null;
+  if (url.indexOf("data:") !== 0) return url;
+  const comma = url.indexOf(",");
+  return comma !== -1 && url.length > comma + 16 ? url : null;
+}
+
 function buildMediaUrl(pkg, path) {
   const bytes = pkg.bytes(path);
   if (!bytes) return null;
   const mime = pkg.mimeOf(path);
   try {
     if (mime === "image/tiff" || mime === "image/tif") {
-      return decodedMedia("tiff", bytes, () => tiffToDataUrl(bytes));
+      return usableUrl(decodedMedia("tiff", bytes, () => tiffToDataUrl(bytes)));
     }
     // Chromium has no JPEG XR decoder, so the WebAssembly codec draws it. The
     // module is warmed before the parse; when it is not ready (or the host
     // refuses WebAssembly) null shows the caller's named placeholder instead of
     // a broken image. JPEG XL is still undecodable here.
     if (/^image\/(vnd\.ms-photo|jxr)$/i.test(mime) || /\.(wdp|hdp|jxr)$/i.test(path)) {
-      return decodedMedia("jxr", bytes, () => {
+      return usableUrl(decodedMedia("jxr", bytes, () => {
         const image = decodeJxrRgba(bytes);
         return image ? pixelsToDataUrl(image.data, image.width, image.height) : null;
-      });
+      }));
     }
     if (/^image\/jxl$/i.test(mime) || /\.jxl$/i.test(path)) return null;
     if (mime === "image/emf" || /\.emf$/i.test(path)) {
-      return decodedMedia("emf", bytes, () => metafileToDataUrl(bytes, "emf"));
+      return usableUrl(decodedMedia("emf", bytes, () => metafileToDataUrl(bytes, "emf")));
     }
     if (mime === "image/wmf" || /\.wmf$/i.test(path)) {
-      return decodedMedia("wmf", bytes, () => metafileToDataUrl(bytes, "wmf"));
+      return usableUrl(decodedMedia("wmf", bytes, () => metafileToDataUrl(bytes, "wmf")));
     }
     // Packages sometimes declare the nonstandard "image/svg" content type; the
     // extension settles it either way, and Chromium refuses anything but the

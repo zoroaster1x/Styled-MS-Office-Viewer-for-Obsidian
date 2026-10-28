@@ -28,6 +28,7 @@
 const { Package } = require("../shared/package");
 const { childrenOf, firstOf, findAll, attr, attrInt, tagName } = require("../shared/xml");
 const { odfLengthToPx } = require("../shared/units");
+const { buildMediaUrl } = require("../media/media");
 const { key } = require("../shared/addr");
 const { parseStyles } = require("../spreadsheet/styles");
 
@@ -35,6 +36,26 @@ const { parseStyles } = require("../spreadsheet/styles");
 
 // ODF keys styles by name. Text and paragraph properties are pre-resolved to
 // the flat property names the renderers use, so no further cascade is needed.
+
+// ODF stores a picture as a part of the package and points at it with an href
+// such as "Pictures/1000000100000061.png". Resolving that is the whole of image
+// support: the media helpers already decode TIFF, EMF, WMF and JPEG XR and hand
+// back a URL the renderer can put on an img.
+function odfMediaUrl(pkg, cache, href) {
+  if (!href) return null;
+  const clean = String(href).replace(/^\.\//, "").replace(/^\//, "").split("#")[0];
+  if (!clean || clean.indexOf(":") !== -1) return null;
+  if (cache.has(clean)) return cache.get(clean);
+  let url = null;
+  try {
+    url = buildMediaUrl(pkg, clean);
+  } catch (err) {
+    url = null;
+  }
+  cache.set(clean, url);
+  return url;
+}
+
 function parseOdfStyles(pkg) {
   const styles = { text: new Map(), paragraph: new Map(), table: new Map(), cell: new Map(), columns: new Map(), rows: new Map(), masterPages: new Map() };
   // A paragraph style names a parent instead of repeating its formatting:
@@ -155,6 +176,23 @@ function parseParagraphProperties(el) {
     if (attr(props, "page-break-before") === "always") out.pageBreakBefore = true;
     const keep = attr(props, "keep-together");
     if (keep === "always") out.keepNext = true;
+  }
+  // Tab stops, which is how a table of contents keeps its page numbers on the
+  // right edge. Without them a tab collapsed and "Introduction" ran straight
+  // into "Page 3".
+  const stops = findAll(el, "tab-stop");
+  if (stops.length) {
+    const list = [];
+    for (const stop of stops) {
+      const position = attr(stop, "position");
+      const px = position ? odfLengthToPx(position) : null;
+      if (px == null) continue;
+      const type = attr(stop, "type") || "left";
+      const leaderText = attr(stop, "leader-text") || "";
+      const leader = leaderText === "_" ? "underscore" : leaderText === "-" ? "hyphen" : leaderText ? "dot" : "none";
+      list.push({ posTw: (px * 1440) / 96, align: type === "char" ? "left" : type, leader });
+    }
+    if (list.length) out.tabStops = list;
   }
   const textProps = firstOf(el, "text-properties");
   if (textProps) {
@@ -514,12 +552,10 @@ function readOdt(input) {
     endnotes: new Map(),
     headers: new Map(),
     footers: new Map(),
-    mediaCache: null,
+    mediaCache: new Map(),
     properties: {},
-    // ODF images are referenced by href rather than embedded relationships, so
-    // the frame renderer leaves them as labelled placeholders for now.
-    mediaUrl() {
-      return null;
+    mediaUrl(href) {
+      return odfMediaUrl(pkg, this.mediaCache, href);
     },
   };
 }
@@ -551,6 +587,13 @@ function findFirstMasterPage(styles) {
 
 // ODF collapses whitespace the way HTML does unless a run asks to preserve it;
 // a single space is what the file means, and <text:s> carries the runs of them.
+// Child elements and text nodes in document order. A DOM without childNodes
+// (the test harness walks one) still yields its elements.
+function elementsAndText(el) {
+  if (el.childNodes && el.childNodes.length) return Array.from(el.childNodes).filter((n) => n.nodeType === 1 || n.nodeType === 3 || n.nodeType === 4);
+  return el.children || [];
+}
+
 function collapseOdfSpace(text) {
   return String(text || "").replace(/[\t\n\r]+/g, " ").replace(/ {2,}/g, " ");
 }
@@ -576,7 +619,7 @@ function odfToParagraph(el, styles, isHeading, order) {
   // text, and without this a styled paragraph drew as body text.
   const inheritedRPr = props.rPr || null;
   const runs = [];
-  const nodes = el.childNodes && el.childNodes.length ? Array.from(el.childNodes) : (el.children || []);
+  const nodes = elementsAndText(el);
   for (const node of nodes) {
     if (node.nodeType === 3 || node.nodeType === 4) {
       const text = collapseOdfSpace(node.nodeValue || "");
@@ -605,13 +648,16 @@ function collectOdfRuns(el, styles, inherited, out) {
   const props = textStyle ? Object.assign({}, inherited || {}, textStyle) : inherited;
   if (tag === "span" || tag === "a" || tag === "meta" || tag === "annotation") {
     if (tag === "annotation") return;
-    for (const child of el.children || []) collectOdfRuns(child, styles, props, out);
-    // A span can wrap plain text and styled runs together; the plain text is a
-    // text node and would otherwise be dropped.
-    const own = el.childNodes ? Array.from(el.childNodes).filter((n) => n.nodeType === 3) : [];
-    for (const node of own) {
-      const text = collapseOdfSpace(node.nodeValue || "");
-      if (text) out.push({ type: "text", text, props: props || null });
+    // A span can wrap plain text, tabs and styled children together, and the
+    // order matters: a table of contents is "Introduction", five tabs, then
+    // the page number. Walking elements first put every tab before the word.
+    for (const node of elementsAndText(el)) {
+      if (node.nodeType === 3) {
+        const text = collapseOdfSpace(node.nodeValue || "");
+        if (text) out.push({ type: "text", text, props: props || null });
+      } else {
+        collectOdfRuns(node, styles, props, out);
+      }
     }
     return;
   }
@@ -733,10 +779,10 @@ function readOdp(input) {
     masters: new Map(),
     layouts: new Map(),
     themes: new Map(),
-    mediaCache: null,
+    mediaCache: new Map(),
     properties: {},
-    mediaUrl() {
-      return null;
+    mediaUrl(href) {
+      return odfMediaUrl(pkg, this.mediaCache, href);
     },
   };
 }

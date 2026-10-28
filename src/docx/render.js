@@ -905,7 +905,8 @@ function createDocxRenderer(opts) {
     }
     // Media resolves when the picture is drawn, not when the document is
     // parsed, so a package only pays for the pages a reader sees.
-    const url = run.url || (run.rid && model.mediaUrl ? model.mediaUrl(run.rid) : null);
+    const reference = run.rid || run.href || null;
+    const url = run.url || (reference && model.mediaUrl ? model.mediaUrl(reference) : null);
     if (url) {
       const img = wrap.createEl("img");
       img.src = url;
