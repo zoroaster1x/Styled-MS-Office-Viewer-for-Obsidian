@@ -37,6 +37,7 @@
 
 import { execFileSync, spawnSync } from "node:child_process";
 import { mkdirSync, writeFileSync, existsSync, readdirSync } from "node:fs";
+import { homedir } from "node:os";
 import { basename, join } from "node:path";
 
 const args = process.argv.slice(2);
@@ -64,9 +65,27 @@ function have(binary, args2) {
 
 const deckcraft = process.env.DECKCRAFT_BIN || "deckcraft-cli";
 const magick = process.env.MAGICK_BIN || "magick";
-const firefox = process.env.FIREFOX_BIN
-  || ["~/.cache/invisible-playwright/firefox"].find((p) => existsSync(p))
-  || "";
+
+// Firefox is whatever the environment names, then a firefox on PATH, then the
+// newest playwright build under this user's cache. No path of anybody's
+// machine belongs in a public repository.
+function findFirefox() {
+  if (process.env.FIREFOX_BIN) return process.env.FIREFOX_BIN;
+  const onPath = spawnSync("sh", ["-c", "command -v firefox"], { encoding: "utf8" });
+  if (onPath.status === 0 && (onPath.stdout || "").trim()) return onPath.stdout.trim();
+  const cache = join(homedir(), ".cache", "invisible-playwright");
+  if (!existsSync(cache)) return "";
+  const builds = readdirSync(cache)
+    .filter((name) => name.startsWith("firefox-"))
+    .sort()
+    .reverse();
+  for (const build of builds) {
+    const candidate = join(cache, build, "firefox");
+    if (existsSync(candidate)) return candidate;
+  }
+  return "";
+}
+const firefox = findFirefox();
 
 if (!have(deckcraft, ["--version"])) {
   console.log("skip: deckcraft-cli is not installed (set DECKCRAFT_BIN)");
