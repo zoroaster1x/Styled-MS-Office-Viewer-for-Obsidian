@@ -37,6 +37,11 @@ const { parseStyles } = require("../spreadsheet/styles");
 // the flat property names the renderers use, so no further cascade is needed.
 function parseOdfStyles(pkg) {
   const styles = { text: new Map(), paragraph: new Map(), table: new Map(), cell: new Map(), columns: new Map(), rows: new Map(), masterPages: new Map() };
+  // A paragraph style names a parent instead of repeating its formatting:
+  // LibreOffice writes "P2" with parent "Heading_20_1", and the heading's size,
+  // weight and colour live there. Keeping only each style's own properties lost
+  // every one of those, so headings drew as body text.
+  const raw = { paragraph: new Map(), text: new Map() };
   const collect = (doc) => {
     if (!doc) return;
     const root = doc.documentElement;
@@ -44,8 +49,8 @@ function parseOdfStyles(pkg) {
       const family = attr(el, "family");
       const name = attr(el, "name");
       if (!family || !name) continue;
-      if (family === "text") styles.text.set(name, parseTextProperties(firstOf(el, "text-properties")));
-      else if (family === "paragraph") styles.paragraph.set(name, parseParagraphProperties(el));
+      if (family === "text") raw.text.set(name, { parent: attr(el, "parent-style-name"), el });
+      else if (family === "paragraph") raw.paragraph.set(name, { parent: attr(el, "parent-style-name"), el });
       else if (family === "table") styles.table.set(name, parseTableProperties(firstOf(el, "table-properties")));
       else if (family === "table-cell") styles.cell.set(name, parseCellProperties(firstOf(el, "table-cell-properties")));
       else if (family === "table-column") styles.columns.set(name, parseColumnProperties(firstOf(el, "table-column-properties")));
@@ -58,6 +63,27 @@ function parseOdfStyles(pkg) {
   };
   collect(pkg.xml("styles.xml"));
   collect(pkg.xml("content.xml"));
+
+  const merged = (family, name, seen) => {
+    const out = {};
+    if (!raw[family].has(name) || seen.has(name)) return out;
+    seen.add(name);
+    const entry = raw[family].get(name);
+    const inherited = entry.parent ? merged(family, entry.parent, seen) : {};
+    Object.assign(out, inherited);
+    const own = family === "paragraph"
+      ? parseParagraphProperties(entry.el)
+      : parseTextProperties(firstOf(entry.el, "text-properties"));
+    if (own) {
+      for (const key of Object.keys(own)) {
+        if (key === "rPr") out.rPr = Object.assign({}, out.rPr || {}, own.rPr || {});
+        else out[key] = own[key];
+      }
+    }
+    return out;
+  };
+  for (const name of raw.paragraph.keys()) styles.paragraph.set(name, merged("paragraph", name, new Set()));
+  for (const name of raw.text.keys()) styles.text.set(name, merged("text", name, new Set()));
   return styles;
 }
 
