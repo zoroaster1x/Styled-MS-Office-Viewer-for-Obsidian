@@ -13,7 +13,7 @@ a glance and 1:1, which region of which page the viewer draws differently.
 
   python3 test/visual-diff.py FILE... [--out DIR] [--slides N|1,2,3] [--pages N]
                                       [--sheet N] [--folder DIR --sample N]
-                                      [--engine auto|onlyoffice|libreoffice]
+                                      [--engine auto|onlyoffice|deckcraft|wordcraft|libreoffice]
                                       [--keep] [--quiet]
 
 With --folder the file list is sampled per extension (N per extension,
@@ -234,6 +234,39 @@ def to_pdf_libreoffice(source: Path, workdir: Path) -> Path | None:
     return pdf
 
 
+# DeckCraft and WordCraft are clean-room office engines with a command line
+# converter. Both write a PDF whose text is selectable, so the rest of the
+# comparison works unchanged. They are closer to Office than LibreOffice on
+# fonts, list markers and picture transforms, which makes them the better
+# reference when the two disagree.
+def _craft_cli(name: str) -> str | None:
+    explicit = os.environ.get("OV_" + name.upper())
+    if explicit and Path(explicit).exists():
+        return explicit
+    candidate = Path.home() / ".local" / "opt" / name / "bin" / (name + "-cli")
+    return str(candidate) if candidate.exists() else None
+
+
+def to_pdf_craft(source: Path, workdir: Path, name: str) -> Path | None:
+    binary = _craft_cli(name)
+    if not binary:
+        print(f"  {name} converter not found (set OV_{name.upper()} to its binary)")
+        return None
+    out = workdir / "ref"
+    out.mkdir(exist_ok=True)
+    dest = out / (source.stem + ".pdf")
+    try:
+        result = run([binary, "convert", str(source), str(dest)], timeout=600)
+    except subprocess.TimeoutExpired:
+        print(f"  {name} conversion timed out")
+        return None
+    if not dest.exists():
+        print(f"  {name} conversion failed:",
+              (result.stderr or result.stdout).strip()[-300:])
+        return None
+    return dest
+
+
 def to_pdf(source: Path, workdir: Path, engine: str):
     """Headless conversion with the chosen engine. Returns (pdf, engine)."""
     if engine in ("auto", "onlyoffice"):
@@ -242,6 +275,18 @@ def to_pdf(source: Path, workdir: Path, engine: str):
             return pdf, "onlyoffice"
         if engine == "onlyoffice":
             return None, "onlyoffice"
+    if engine in ("auto", "deckcraft"):
+        pdf = to_pdf_craft(source, workdir, "deckcraft")
+        if pdf:
+            return pdf, "deckcraft"
+        if engine == "deckcraft":
+            return None, "deckcraft"
+    if engine in ("auto", "wordcraft"):
+        pdf = to_pdf_craft(source, workdir, "wordcraft")
+        if pdf:
+            return pdf, "wordcraft"
+        if engine == "wordcraft":
+            return None, "wordcraft"
     if engine in ("auto", "libreoffice"):
         pdf = to_pdf_libreoffice(source, workdir)
         if pdf:
@@ -453,7 +498,7 @@ def main():
     parser.add_argument("--keep", action="store_true")
     parser.add_argument("--quiet", action="store_true")
     parser.add_argument(
-        "--engine", choices=["auto", "onlyoffice", "libreoffice"], default="auto",
+        "--engine", choices=["auto", "onlyoffice", "deckcraft", "wordcraft", "libreoffice"], default="auto",
         help="reference converter: auto prefers the OnlyOffice converter and "
              "falls back to LibreOffice",
     )
