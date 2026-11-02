@@ -700,6 +700,15 @@
   white-space: pre;
 }
 
+/* Office stores pixels as they are and rotates them with its own transform. A
+   browser applies a JPEG's EXIF orientation to the bitmap first, which turns a
+   picture the file rotates by 90 degrees into a second, wrong turn. */
+.ov-docx-page img,
+.ov-pptx-page img,
+.xlsx-sheet img {
+  image-orientation: none;
+}
+
 .ov-docx-image {
   display: inline-block;
   max-width: 100%;
@@ -1053,8 +1062,11 @@
   white-space: pre-wrap;
 }
 
-/* bodyPr wrap="none": the text never wraps, it spills past the shape. */
-.ov-pptx-nowrap .ov-pptx-p {
+/* bodyPr wrap="none": the text never wraps, it spills past the shape. The run
+   span carries its own pre-wrap, so naming only the paragraph still wrapped
+   the first long line at the box edge. */
+.ov-pptx-nowrap .ov-pptx-p,
+.ov-pptx-nowrap .ov-pptx-r {
   white-space: pre;
 }
 
