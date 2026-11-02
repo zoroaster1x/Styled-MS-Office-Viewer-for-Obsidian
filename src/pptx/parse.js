@@ -191,9 +191,9 @@ function parseMasters(pkg, mediaCache) {
     };
     const txStyles = firstOf(root, "txStyles");
     master.textStyles = txStyles ? {
-      title: parseListStyle(firstOf(txStyles, "titleStyle")),
-      body: parseListStyle(firstOf(txStyles, "bodyStyle")),
-      other: parseListStyle(firstOf(txStyles, "otherStyle")),
+      title: parseListStyle(firstOf(txStyles, "titleStyle"), master),
+      body: parseListStyle(firstOf(txStyles, "bodyStyle"), master),
+      other: parseListStyle(firstOf(txStyles, "otherStyle"), master),
     } : null;
     out.set(name, master);
   }
@@ -924,7 +924,7 @@ function shapesBounds(shapes) {
 
 function parseTextBody(txBody, ctx, shape) {
   const bodyPr = firstOf(txBody, "bodyPr");
-  const own = parseListStyle(firstOf(txBody, "lstStyle"));
+  const own = parseListStyle(firstOf(txBody, "lstStyle"), ctx);
   const lstStyle = mergeListStyles([own].concat(placeholderListStyles(shape, ctx)));
   const paragraphs = [];
   for (const p of childrenOf(txBody, "p")) {
@@ -977,7 +977,7 @@ function parseBodyProps(bodyPr, fallback) {
 function parseParagraph(p, ctx, lstStyle, shape) {
   const pPr = firstOf(p, "pPr");
   const out = {
-    props: parseParaLevelProps(pPr),
+    props: parseParaLevelProps(pPr, ctx),
     runs: [],
     text: "",
     endParaRPr: null,
@@ -1128,7 +1128,7 @@ function fillRunProps(props, defaults) {
   return props;
 }
 
-function parseParaLevelProps(pPr) {
+function parseParaLevelProps(pPr, ctx) {
   if (!pPr) return { level: 0 };
   const out = {
     level: attrInt(pPr, "lvl", 0),
@@ -1159,7 +1159,7 @@ function parseParaLevelProps(pPr) {
   const buSzPct = firstOf(pPr, "buSzPct");
   if (buSzPct) out.bulletSize = attrInt(buSzPct, "val", 100000) / 100000;
   const defRPr = firstOf(pPr, "defRPr");
-  if (defRPr) out.runProps = parseRunProps(defRPr, null);
+  if (defRPr) out.runProps = parseRunProps(defRPr, ctx);
   const tabLst = firstOf(pPr, "tabLst");
   if (tabLst) out.tabs = childrenOf(tabLst, "tab").map((t) => attrInt(t, "pos", 0));
   return out;
@@ -1243,12 +1243,15 @@ function ctxTheme(ctx) {
 
 // A list style is keyed by level, 1 through 9. The returned object exposes
 // levelAt(n) so callers do not care that the source tags carry the number.
-function parseListStyle(lstStyle) {
+function parseListStyle(lstStyle, ctx) {
   if (!lstStyle) return null;
   const levels = new Map();
   for (const child of lstStyle.children || []) {
     const match = /^lvl(\d)pPr$/.exec(tagName(child));
-    if (match) levels.set(Number(match[1]), parseParaLevelProps(child));
+    // The level's defRPr carries the colour and font a layout or master gives
+    // its text, often as a theme slot ("bg1" on a dark title). Without the
+    // theme those resolve to null and the slide falls back to black.
+    if (match) levels.set(Number(match[1]), parseParaLevelProps(child, ctx));
   }
   if (!levels.size) return null;
   return {

@@ -405,7 +405,12 @@ function createPptxRenderer(opts) {
       return el;
     }
     const hasText = shape.textInfo && shape.textInfo.text && shape.textInfo.text.trim();
-    if (!hasText && !shape.fill && !shape.line) return null;
+    // A decoration can be a picture (the logo a layout puts on every slide) or
+    // any other drawn object. Testing only text, fill and line dropped them.
+    const drawn = shape.type === "picture" || shape.type === "table" || shape.type === "chart" ||
+      shape.type === "diagram" || shape.type === "connector" ||
+      (shape.geometry && shape.geometry.preset && shape.geometry.preset !== "rect");
+    if (!hasText && !drawn && !shape.fill && !shape.line) return null;
     return drawShape(shape, slide, Object.assign({}, o, { decoration: true }));
   }
 
@@ -1075,6 +1080,9 @@ function createPptxRenderer(opts) {
     const scale = fitTextToBox(body, innerWidth, shapeBox.cy, defaultSizePt, o, slide);
 
     const paragraphs = body.paragraphs;
+    // Numbered lists count per level within the shape. The index was never
+    // set, so every "1." list printed the starting number on every item.
+    numberAutoBullets(paragraphs);
     for (let index = 0; index < paragraphs.length; index++) {
       const paragraph = paragraphs[index];
       const p = box.createDiv("ov-pptx-p");
@@ -1091,13 +1099,21 @@ function createPptxRenderer(opts) {
       if (props.spaceAfterPt && typeof props.spaceAfterPt === "number") p.style.marginBottom = ptToPx(props.spaceAfterPt) + "px";
       const lineSpacingPct = props.lineSpacingPct ? props.lineSpacingPct * lineScale : null;
       const lineSpacingPt = props.lineSpacingPt ? props.lineSpacingPt * lineScale : null;
-      if (lineSpacingPct) p.style.lineHeight = String(lineSpacingPct);
+      // A percentage in the file is a share of single spacing, and single
+      // spacing is the font's own line box (about 1.2 em for Calibri), not the
+      // em itself. Using the percentage as a CSS multiplier stacked a long
+      // list 5% tighter than the reference renderer and PowerPoint.
+      if (lineSpacingPct) p.style.lineHeight = lineSpacingPct === 1 ? "normal" : String(lineSpacingPct * 1.2);
       else if (lineSpacingPt) p.style.lineHeight = ptToPx(lineSpacingPt) + "px";
+      // No spacing stated means single spacing, which is the font's own line
+      // box rather than a fixed multiplier: Arial and Calibri differ by 9%.
       else if (lineScale !== 1) p.style.lineHeight = String(1.18 * lineScale);
-      // A list that ends with an empty paragraph shows no marker for it, which
-      // is what PowerPoint and the reference renderers all print.
-      const trailingEmpty = !paragraph.text && index === paragraphs.length - 1;
-      const bullet = trailingEmpty ? null : paragraph.bullet;
+      else p.style.lineHeight = "normal";
+      // An empty paragraph in a list shows no marker, wherever it sits: a deck
+      // uses a blank line between two points and neither PowerPoint nor the
+      // reference renderers print a stray bullet for it.
+      const blank = !String(paragraph.text || "").trim() && !paragraph.runs.some((run) => run.type === "math");
+      const bullet = blank ? null : paragraph.bullet;
       const firstRun = paragraph.runs.find((run) => run.type === "run" && run.props) || null;
       if (bullet) {
         const marker = p.createSpan("ov-pptx-bullet");
@@ -1114,10 +1130,23 @@ function createPptxRenderer(opts) {
         const hanging = Math.max(0, -indent);
         if (hanging >= 1) {
           // Give the marker the width the negative indent opened up, so the
-          // text after it starts at marL as it does in PowerPoint.
-          marker.style.display = "inline-block";
+          // text after it starts at marL as it does in PowerPoint. It is taken
+          // out of the flow: an inline block taller than the strut grows every
+          // line box by a few pixels, which piles up down a long list.
+          marker.style.position = "absolute";
+          marker.style.left = "0px";
+          marker.style.top = "0px";
           marker.style.width = hanging + "px";
+          // PowerPoint leaves a quarter em between the marker and the text;
+          // filling the hanging slot edge to edge reads as a run-on.
+          marker.style.paddingRight = "0.25em";
+          marker.style.boxSizing = "border-box";
+          marker.style.textAlign = "right";
           marker.style.marginRight = "0";
+          p.style.position = "relative";
+          // The hanging indent moved the first line into the marker's slot. The
+          // marker no longer takes part in the line, so the text keeps marL.
+          p.style.textIndent = "0px";
         }
       }
       for (const run of paragraph.runs) {
@@ -1204,7 +1233,10 @@ function createPptxRenderer(opts) {
   // the file carries one. The search is a bisection, so it lands within a
   // percent of the fit: a five percent step leaves a title one word too wide.
   function fitTextToBox(body, widthPx, heightPx, defaultSizePt, o, slide) {
-    if (o.thumbnail) return 0.06;
+    // A thumbnail is the full slide scaled down by a CSS transform, so its
+    // text is drawn at the same size as the slide and shrinks with it. The old
+    // 6% figure shrank the text a second time and left every preview blank.
+    if (o.thumbnail) return 1;
     if (!body.bodyProps || !body.bodyProps.autofit || body.bodyProps.autofit.type === "none") return 1;
     if (!heightPx || heightPx <= 0 || widthPx <= 0) return 1;
     const declared = body.bodyProps.autofit.fontScale;
@@ -1216,7 +1248,7 @@ function createPptxRenderer(opts) {
         const props = paragraph.props || {};
         const runProps = props.runProps || null;
         const sizePt = (runProps && runProps.sizePt ? runProps.sizePt : defaultSizePt) * scale * (runProps && runProps.baseline ? 0.58 : 1);
-        const linePx = ptToPx(sizePt) * (props.lineSpacingPct || 1.18) * lineScale;
+        const linePx = ptToPx(sizePt) * (props.lineSpacingPct ? props.lineSpacingPct * 1.2 : 1.18) * lineScale;
         // marL is resolved during parsing; the raw paragraph attribute is a
         // fallback only for older shapes.
         const indent = paragraph.marLEmu != null ? emuToPx(paragraph.marLEmu) : (props.marginLeftEmu != null ? emuToPx(props.marginLeftEmu) : 0);
@@ -1268,6 +1300,20 @@ function createPptxRenderer(opts) {
       }
     }
     return lines;
+  }
+
+  // Auto numbered items count from their own level's previous item, restarting
+  // whenever a shallower level interrupts the deeper one.
+  function numberAutoBullets(paragraphs) {
+    const counters = [];
+    for (const paragraph of paragraphs) {
+      const bullet = paragraph.bullet;
+      if (!bullet || bullet.kind !== "auto") continue;
+      const level = paragraph.level || 0;
+      for (let deeper = level + 1; deeper < counters.length; deeper++) counters[deeper] = 0;
+      counters[level] = (counters[level] || 0) + 1;
+      paragraph.bulletIndex = counters[level] - 1;
+    }
   }
 
   function autoNumber(bullet, paragraph) {

@@ -133,11 +133,12 @@ if (arrow) {
   check("flipV puts the line end at the top", line.getAttribute("y2") === "0" && line.getAttribute("y1") !== "0", line.getAttribute("y1") + " -> " + line.getAttribute("y2"));
 }
 
-// Paragraph levels carry their spacing: the title's 90% line spacing, the
+// Paragraph levels carry their spacing: the title's 90% of single spacing
+// (1.2 em), the
 // body list's 10pt before, and normAutofit's 20% line spacing reduction.
 const title = byText("Plain title");
 const titleP = title && title.querySelector(".ov-pptx-p");
-check("title inherits 90 percent line spacing", titleP && titleP.style.lineHeight === "0.9", titleP && titleP.style.lineHeight);
+check("title inherits 90 percent line spacing", titleP && titleP.style.lineHeight === "1.08", titleP && titleP.style.lineHeight);
 const body = byText("Second point");
 const second = body && Array.from(body.querySelectorAll(".ov-pptx-p")).find((el) => el.textContent.indexOf("Second") !== -1);
 check("body list inherits its spacing before", second && Math.abs(px(second.style.marginTop) - 13.333) < 0.01, second && second.style.marginTop);
