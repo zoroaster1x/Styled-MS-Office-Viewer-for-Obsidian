@@ -503,21 +503,27 @@ function createRenderer(opts) {
   function cellEdgeBorder(r, c, side) {
     const merge = G.coverMap.get(key(r, c));
     if (!merge) return rawBorder(r, c, side);
+    // A merge can reach past the drawn range: Excel stores a merged column as
+    // D1:D1048576. Scanning its whole span resolved a style per row for every
+    // edge, which held the thread for minutes; only drawn cells can carry a
+    // border anyway.
+    const lastRow = Math.min(merge.r2, G.maxRow);
+    const lastCol = Math.min(merge.c2, G.maxCol);
     let best = null;
     if (side === "left" && c === merge.c1) {
-      for (let rr = merge.r1; rr <= merge.r2; rr++) best = strongerBorder(best, rawBorder(rr, merge.c1, "left"));
+      for (let rr = merge.r1; rr <= lastRow; rr++) best = strongerBorder(best, rawBorder(rr, merge.c1, "left"));
       return best;
     }
     if (side === "right" && c === merge.c2) {
-      for (let rr = merge.r1; rr <= merge.r2; rr++) best = strongerBorder(best, rawBorder(rr, merge.c2, "right"));
+      for (let rr = merge.r1; rr <= lastRow; rr++) best = strongerBorder(best, rawBorder(rr, merge.c2, "right"));
       return best;
     }
     if (side === "top" && r === merge.r1) {
-      for (let cc = merge.c1; cc <= merge.c2; cc++) best = strongerBorder(best, rawBorder(merge.r1, cc, "top"));
+      for (let cc = merge.c1; cc <= lastCol; cc++) best = strongerBorder(best, rawBorder(merge.r1, cc, "top"));
       return best;
     }
     if (side === "bottom" && r === merge.r2) {
-      for (let cc = merge.c1; cc <= merge.c2; cc++) best = strongerBorder(best, rawBorder(merge.r2, cc, "bottom"));
+      for (let cc = merge.c1; cc <= lastCol; cc++) best = strongerBorder(best, rawBorder(merge.r2, cc, "bottom"));
       return best;
     }
     return null;

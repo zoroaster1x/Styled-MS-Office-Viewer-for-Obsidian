@@ -239,9 +239,16 @@ function parseSheet(xmlText, ctx) {
     }
     dims = { r1: minR || 1, c1: minC || 1, r2: maxRow || 1, c2: maxCol || 1 };
   }
+  // Excel lets a merge cover a whole column or row (`D1:D1048576`). Treating
+  // that span as the sheet's used range laid out a million rows and held the
+  // thread for minutes on a 13 KB file. The cells a merge covers beyond the
+  // content are empty, so the used range only follows it as far as ordinary
+  // empty cells go.
+  const MERGE_ROW_SLACK = 200;
+  const MERGE_COL_SLACK = 50;
   for (const merge of model.merges) {
-    if (merge.r2 > dims.r2) dims.r2 = merge.r2;
-    if (merge.c2 > dims.c2) dims.c2 = merge.c2;
+    if (merge.r2 > dims.r2) dims.r2 = Math.min(merge.r2, dims.r2 + MERGE_ROW_SLACK);
+    if (merge.c2 > dims.c2) dims.c2 = Math.min(merge.c2, dims.c2 + MERGE_COL_SLACK);
     if (merge.r1 < dims.r1) dims.r1 = merge.r1;
     if (merge.c1 < dims.c1) dims.c1 = merge.c1;
   }
