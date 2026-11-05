@@ -157,12 +157,13 @@ function createPptxRenderer(opts) {
   function buildRail() {
     railEl.empty();
     model.slides.forEach((slide, index) => {
-      // A button, so the rail takes focus and its own arrow keys, and the tab
-      // order reaches it.
-      const button = railEl.createEl("button", {
-        cls: "ov-pptx-thumb",
-        attr: { type: "button", "aria-label": "Slide " + (index + 1) },
-      });
+      // Focusable and announced as a button, but a div: a real button takes the
+      // host's button height, which clipped every preview into the next one.
+      // The rail handles Enter and Space itself, so nothing is lost.
+      const button = railEl.createDiv("ov-pptx-thumb");
+      button.setAttribute("role", "button");
+      button.setAttribute("tabindex", "0");
+      button.setAttribute("aria-label", "Slide " + (index + 1));
       button.dataset.index = String(index);
       const number = button.createDiv("ov-pptx-thumbnum");
       number.setText(String(index + 1));
@@ -211,10 +212,12 @@ function createPptxRenderer(opts) {
     }
   }
 
-  // A wheel over the stage steps a slide once it has travelled far enough. A
-  // trackpad sends many small deltas, a mouse one big one, so the total is
-  // accumulated and reset after a pause.
+  // A wheel over the stage steps one slide per notch, the moment the notch
+  // arrives. A trackpad sends a stream of small deltas instead, so those are
+  // summed and stepped every 30 px with the remainder kept: a fast scroll keeps
+  // moving instead of paying a threshold each time.
   const WHEEL_STEP_PX = 30;
+  const WHEEL_NOTCH_PX = 80;
   let wheelPending = 0;
   let wheelReset = null;
 
@@ -224,6 +227,11 @@ function createPptxRenderer(opts) {
     if (ev.ctrlKey || ev.metaKey) return;
     if (!ev.deltaY) return;
     ev.preventDefault();
+    if (Math.abs(ev.deltaY) >= WHEEL_NOTCH_PX) {
+      wheelPending = 0;
+      stepSlide(ev.deltaY > 0 ? 1 : -1);
+      return;
+    }
     if (wheelReset) clearTimeout(wheelReset);
     wheelReset = setTimeout(() => {
       wheelPending = 0;
@@ -231,10 +239,10 @@ function createPptxRenderer(opts) {
     }, 220);
     wheelPending += ev.deltaY;
     if (wheelPending >= WHEEL_STEP_PX) {
-      wheelPending = 0;
+      wheelPending -= WHEEL_STEP_PX;
       stepSlide(1);
     } else if (wheelPending <= -WHEEL_STEP_PX) {
-      wheelPending = 0;
+      wheelPending += WHEEL_STEP_PX;
       stepSlide(-1);
     }
   }
@@ -266,25 +274,15 @@ function createPptxRenderer(opts) {
     if (next.scrollIntoView) next.scrollIntoView({ block: "nearest" });
   }
 
-  // Nudge the current slide out of the way, then draw the next one. The nudge
-  // is short enough to read as a push and never delays a fast reader.
-  let stepTimer = null;
-
+  // Draw the next slide at once and let its entry animation carry the push.
+  // Delaying the swap by the nudge meant a held arrow key re-entered this
+  // function faster than the timer fired, cancelled it every time, and the
+  // deck sat still.
   function stepSlide(direction, targetIndex) {
     const target = targetIndex != null ? targetIndex : current + direction;
     if (target < 0 || target >= model.slides.length) return;
     const dir = target > current ? 1 : target < current ? -1 : 0;
-    const frame = stageEl && stageEl.querySelector(".ov-pptx-frame");
-    if (!settings.animate || !frame || !dir) {
-      showSlide(target, dir);
-      return;
-    }
-    if (stepTimer) clearTimeout(stepTimer);
-    frame.classList.add(dir > 0 ? "ov-pptx-nudge-up" : "ov-pptx-nudge-down");
-    stepTimer = setTimeout(() => {
-      stepTimer = null;
-      showSlide(target, dir);
-    }, 90);
+    showSlide(target, dir);
   }
 
   function showSlide(index, direction) {
@@ -1556,7 +1554,6 @@ function createPptxRenderer(opts) {
 
   function destroy() {
     destroyed = true;
-    if (stepTimer) clearTimeout(stepTimer);
     if (wheelReset) clearTimeout(wheelReset);
     thumbnailObserver.disconnect();
     if (resizeObserver) {

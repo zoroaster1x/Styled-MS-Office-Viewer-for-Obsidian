@@ -14,18 +14,28 @@
 
 /* ---------- toolbar ---------- */
 
+/* Obsidian's own conventions: a single row, the title giving way first, icon
+   buttons built on .clickable-icon, and spacing from the size scale so the bar
+   matches every theme. */
 .ov-toolbar {
+  /* Two rows, deliberate: the file name owns the first, the controls the
+     second. Nothing competes for the same line, so nothing can overlap. */
   display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 10px;
-  flex-wrap: wrap;
+  flex-direction: column;
+  align-items: stretch;
+  gap: var(--size-4-1, 4px);
   flex: 0 0 auto;
+  min-width: 0;
+  padding: 2px 0;
 }
 
 .ov-title {
-  font-size: 1.05em;
-  font-weight: 650;
+  flex: 0 0 auto;
+  width: 100%;
+  min-width: 0;
+  font-size: var(--font-ui-medium, 1em);
+  font-weight: var(--font-semibold, 600);
+  color: var(--text-normal);
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -34,53 +44,64 @@
 .ov-tools {
   display: flex;
   align-items: center;
-  gap: 10px;
-  flex-wrap: wrap;
+  gap: var(--size-4-2, 8px);
+  flex: 0 0 auto;
+  /* One row. The finder sits at the left edge, everything else at the right;
+     the finder is the only group that gives way in a narrow pane. */
+  flex-wrap: nowrap;
+  justify-content: flex-end;
+  min-width: 0;
 }
 
-/* Finder, zoom, this format's navigation, and the shared buttons. The wider
-   gap between groups is the only separator, so a busy toolbar still reads as
-   four controls rather than a row of icons. */
+.ov-tools > .ov-tool-group:nth-child(2) {
+  margin-left: auto;
+}
+
 .ov-tool-group {
   display: flex;
   align-items: center;
-  gap: 2px;
+  gap: var(--size-4-1, 4px);
+  flex: 0 0 auto;
+  min-width: 0;
 }
 
 .ov-tool-group:empty {
   display: none;
 }
 
-.ov-tool-btn {
-  background: transparent;
-  border: none;
-  box-shadow: none;
-  border-radius: 5px;
-  cursor: pointer;
-  padding: 4px;
-  color: var(--text-muted);
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
+/* The finder is the one group allowed to shrink, so the icon groups keep their
+   size and the search box gives way instead. */
+.ov-search-group {
+  flex: 0 1 auto;
+  min-width: 0;
 }
 
-.ov-tool-btn:hover {
-  background: var(--background-modifier-hover);
-  color: var(--text-normal);
+/* A hairline between groups, so four runs of icons read as four controls. */
+.ov-tool-group + .ov-tool-group {
+  padding-left: var(--size-4-2, 8px);
+  border-left: 1px solid var(--background-modifier-border);
+}
+
+.ov-tool-btn {
+  padding: var(--size-2-2, 4px);
+  border-radius: var(--radius-s, 5px);
+  color: var(--icon-color, var(--text-muted));
 }
 
 .ov-tool-btn.is-active {
-  background: var(--background-modifier-hover);
   color: var(--text-normal);
+  background-color: var(--background-modifier-hover);
 }
 
 .ov-search-input {
+  flex: 0 1 150px;
   width: 150px;
-  height: 26px;
-  font-size: 12px;
+  min-width: 48px;
+  max-width: 220px;
+  height: var(--input-height, 30px);
+  font-size: var(--font-ui-smaller, 0.8em);
 }
 
-/* The finder chevrons, left of the box, and only while a search has matches. */
 .ov-search-nav {
   display: flex;
   align-items: center;
@@ -92,11 +113,12 @@
 }
 
 .ov-search-count {
-  font-size: 0.8em;
+  font-size: var(--font-ui-smaller, 0.8em);
   color: var(--text-muted);
-  min-width: 64px;
-  margin-left: 4px;
+  min-width: 0;
+  margin-left: var(--size-4-1, 4px);
   text-align: left;
+  white-space: nowrap;
 }
 
 .ov-search-count:empty {
@@ -989,8 +1011,8 @@
   border-radius: 5px;
   cursor: pointer;
   margin-bottom: 4px;
-  /* A button reset: the rail is a list of buttons now, so the arrows and Tab
-     reach it, and the host's default button paint must not show through. */
+  /* The rail is a list of focusable buttons built from divs, so the host's
+     button height and paint cannot clip one preview into the next. */
   width: 100%;
   background: transparent;
   border: none;
@@ -998,6 +1020,8 @@
   font: inherit;
   color: inherit;
   text-align: inherit;
+  height: auto;
+  min-height: 0;
 }
 
 .ov-pptx-thumb:focus-visible {
@@ -1065,34 +1089,24 @@
   transition: transform 90ms ease-out, opacity 90ms ease-out;
 }
 
-/* A wheel or an arrow key nudges the current slide out, then the next one
-   settles in from the other side. Short enough to read as a push. */
-.ov-pptx-nudge-up {
-  transform: translateY(-12px);
-  opacity: 0.55;
-}
-
-.ov-pptx-nudge-down {
-  transform: translateY(12px);
-  opacity: 0.55;
-}
-
+/* A wheel or an arrow key draws the next slide at once; its entry animation
+   carries the push, so a held key never waits on an outgoing one. */
 .ov-pptx-frame.ov-pptx-enter-next {
-  animation: ov-pptx-enter-next 150ms ease-out;
+  animation: ov-pptx-enter-next 110ms ease-out;
 }
 
 .ov-pptx-frame.ov-pptx-enter-prev {
-  animation: ov-pptx-enter-prev 150ms ease-out;
+  animation: ov-pptx-enter-prev 110ms ease-out;
 }
 
 @keyframes ov-pptx-enter-next {
-  from { opacity: 0.45; transform: translateY(16px); }
-  to { opacity: 1; transform: none; }
+  from { transform: translateY(14px); }
+  to { transform: none; }
 }
 
 @keyframes ov-pptx-enter-prev {
-  from { opacity: 0.45; transform: translateY(-16px); }
-  to { opacity: 1; transform: none; }
+  from { transform: translateY(-14px); }
+  to { transform: none; }
 }
 
 .ov-pptx-slide {
@@ -1229,7 +1243,7 @@
   }
 
   .ov-search-input {
-    width: 90px;
+    flex-basis: 90px;
   }
 }
 

@@ -172,7 +172,7 @@ class OfficeView extends FileView {
     // The tools sit in groups: finder, zoom, navigation for this format, then
     // the buttons every format shares. The gaps are the only separation, so a
     // long toolbar still reads as a handful of controls.
-    this.searchGroup = this.toolsEl.createDiv("ov-tool-group");
+    this.searchGroup = this.toolsEl.createDiv("ov-tool-group ov-search-group");
     this.searchNavEl = this.searchGroup.createSpan("ov-search-nav is-hidden");
     this.searchInput = this.searchGroup.createEl("input", {
       cls: "ov-search-input",
@@ -254,7 +254,8 @@ class OfficeView extends FileView {
       if (previous && previous.parentNode === this.navGroup) this.navGroup.insertBefore(previous, this.slideLabelEl);
       this.addButton("chevron-right", "Next slide", () => this.controller && this.controller.nextSlide(), this.navGroup);
       this.slideshowBtn = this.addButton("play", "Start or stop the slideshow", () => this.toggleSlideshow());
-      this.fitBtn = this.addButton("move-vertical", "Fit the slide to the window or its own size", () => {
+      const fitted = this.plugin.settings.slideFit !== "none";
+      this.fitBtn = this.addButton(fitted ? "maximize" : "minimize", fitted ? "Show the slide at its actual size" : "Fit the slide to the window", () => {
         const next = this.plugin.settings.slideFit === "contain" ? "none" : "contain";
         if (this.controller) this.controller.setFit(next);
         this.refreshToolbarState();
@@ -272,7 +273,9 @@ class OfficeView extends FileView {
 
   addButton(icon, title, onClick, parent) {
     const btn = (parent || this.actionGroup || this.toolsEl).createEl("button", {
-      cls: "ov-tool-btn",
+      // clickable-icon is the host's own icon button: same size, hover, focus
+      // ring and colour as every other button in the app.
+      cls: "clickable-icon ov-tool-btn",
       attr: { "aria-label": title, title },
     });
     setIcon(btn, icon);
@@ -289,7 +292,12 @@ class OfficeView extends FileView {
       this.filterBtn.toggleClass("is-active", this.controller ? this.controller.showFilterBar !== false : true);
     }
     if (this.fitBtn) {
-      this.fitBtn.toggleClass("is-active", this.plugin.settings.slideFit !== "none");
+      const fitted = this.plugin.settings.slideFit !== "none";
+      const label = fitted ? "Show the slide at its actual size" : "Fit the slide to the window";
+      this.fitBtn.toggleClass("is-active", fitted);
+      setIcon(this.fitBtn, fitted ? "maximize" : "minimize");
+      this.fitBtn.setAttribute("aria-label", label);
+      this.fitBtn.setAttribute("title", label);
     }
     if (this.outlineBtn) {
       this.outlineBtn.toggleClass("is-active", this.outlinePanelOpen);
