@@ -104,7 +104,7 @@ class OfficeView extends FileView {
     this.buildChrome();
     this.renderEmpty();
     if (this.registerDomEvent) {
-      this.registerDomEvent(document, "keydown", (ev) => this.onSlideshowKey(ev));
+      this.registerDomEvent(document, "keydown", (ev) => this.onViewKey(ev));
       // Documents and decks get a menu of their own; the grid has had one for a
       // while. Capture phase, so the app's plain text menu does not win.
       this.registerDomEvent(this.hostEl, "contextmenu", (ev) => this.onDocumentContextMenu(ev), true);
@@ -169,14 +169,16 @@ class OfficeView extends FileView {
     this.titleEl = this.toolbarEl.createDiv("ov-title");
     this.toolsEl = this.toolbarEl.createDiv("ov-tools");
 
-    // The finder chevrons sit left of the box and appear only for a search that
-    // has matches; the count sits right of the box.
-    this.searchNavEl = this.toolsEl.createSpan("ov-search-nav is-hidden");
-    this.searchInput = this.toolsEl.createEl("input", {
+    // The tools sit in groups: finder, zoom, navigation for this format, then
+    // the buttons every format shares. The gaps are the only separation, so a
+    // long toolbar still reads as a handful of controls.
+    this.searchGroup = this.toolsEl.createDiv("ov-tool-group");
+    this.searchNavEl = this.searchGroup.createSpan("ov-search-nav is-hidden");
+    this.searchInput = this.searchGroup.createEl("input", {
       cls: "ov-search-input",
       attr: { type: "text", placeholder: "Search", spellcheck: "false" },
     });
-    this.searchCountEl = this.toolsEl.createSpan("ov-search-count");
+    this.searchCountEl = this.searchGroup.createSpan("ov-search-count");
     this.searchInput.addEventListener("input", () => this.runSearch(this.searchInput.value));
     this.searchInput.addEventListener("keydown", (ev) => {
       if (ev.key === "Enter") {
@@ -188,8 +190,12 @@ class OfficeView extends FileView {
       }
     });
 
-    this.zoomLabel = this.toolsEl.createSpan("ov-zoom-label");
-    this.pageLabelEl = this.toolsEl.createSpan("ov-page-label is-hidden");
+    this.zoomGroup = this.toolsEl.createDiv("ov-tool-group");
+    this.zoomLabel = this.zoomGroup.createSpan("ov-zoom-label");
+    this.navGroup = this.toolsEl.createDiv("ov-tool-group");
+    this.pageLabelEl = this.navGroup.createSpan("ov-page-label is-hidden");
+    this.slideLabelEl = this.navGroup.createSpan("ov-slide-label is-hidden");
+    this.actionGroup = this.toolsEl.createDiv("ov-tool-group");
 
     this.tabsEl = content.createDiv("ov-tabs");
     this.outlineEl = content.createDiv("ov-outline is-hidden");
@@ -213,8 +219,8 @@ class OfficeView extends FileView {
     this.setSearchNav(0);
     this.addButton("chevron-up", "Previous match", () => this.stepSearch(-1), this.searchNavEl);
     this.addButton("chevron-down", "Next match", () => this.stepSearch(1), this.searchNavEl);
-    this.addButton("zoom-out", "Zoom out", () => this.setZoom(this.currentZoom() - 10));
-    const zoomIn = this.addButton("zoom-in", "Zoom in", () => this.setZoom(this.currentZoom() + 10));
+    this.addButton("zoom-out", "Zoom out", () => this.setZoom(this.currentZoom() - 10), this.zoomGroup);
+    const zoomIn = this.addButton("zoom-in", "Zoom in", () => this.setZoom(this.currentZoom() + 10), this.zoomGroup);
     // The percentage sits with the magnifying glasses, not among the search
     // controls; the label is created once and moved after the buttons.
     if (zoomIn && zoomIn.parentNode) zoomIn.parentNode.insertBefore(this.zoomLabel, zoomIn.nextSibling);
@@ -238,8 +244,15 @@ class OfficeView extends FileView {
         if (this.controller) this.controller.resetSizes();
       });
     } else if (kind === "presentation") {
-      this.addButton("chevron-left", "Previous slide", () => this.controller && this.controller.previousSlide());
-      this.addButton("chevron-right", "Next slide", () => this.controller && this.controller.nextSlide());
+      // The counter lives between the arrows, so the slide position and the
+      // way to move it are one control instead of a title suffix and two
+      // buttons apart.
+      const previous = this.addButton("chevron-left", "Previous slide", () => this.controller && this.controller.previousSlide(), this.navGroup);
+      this.slideLabelEl.removeClass("is-hidden");
+      // The label already exists in the group, so put the arrow before it and
+      // the other after it: counter between the arrows, one control.
+      if (previous && previous.parentNode === this.navGroup) this.navGroup.insertBefore(previous, this.slideLabelEl);
+      this.addButton("chevron-right", "Next slide", () => this.controller && this.controller.nextSlide(), this.navGroup);
       this.slideshowBtn = this.addButton("play", "Start or stop the slideshow", () => this.toggleSlideshow());
       this.fitBtn = this.addButton("move-vertical", "Fit the slide to the window or its own size", () => {
         const next = this.plugin.settings.slideFit === "contain" ? "none" : "contain";
@@ -251,13 +264,14 @@ class OfficeView extends FileView {
       if (this.pageLabelEl) this.pageLabelEl.removeClass("is-hidden");
     }
     if (this.pageLabelEl && kind !== "document") this.pageLabelEl.addClass("is-hidden");
+    if (this.slideLabelEl && kind !== "presentation") this.slideLabelEl.addClass("is-hidden");
     this.metaBtn = this.addButton("info", "Show or hide the file details", () => this.toggleMeta());
     this.addButton("refresh-cw", "Reload the file", () => this.reload());
     this.refreshToolbarState();
   }
 
   addButton(icon, title, onClick, parent) {
-    const btn = (parent || this.toolsEl).createEl("button", {
+    const btn = (parent || this.actionGroup || this.toolsEl).createEl("button", {
       cls: "ov-tool-btn",
       attr: { "aria-label": title, title },
     });
@@ -301,6 +315,7 @@ class OfficeView extends FileView {
     this.filterBarEl.empty();
     this.statusEl.setText("");
     this.titleEl.setText(file.name);
+    if (this.slideLabelEl) this.slideLabelEl.setText("");
     this.updateHeader();
     // Up before the first byte is read, so the pane shows the file is opening.
     const loading = this.hostEl.createDiv("ov-loading");
@@ -418,7 +433,12 @@ class OfficeView extends FileView {
   updateTitleWithSlide(info) {
     if (!this.file) return;
     const suffix = info && info.title ? " \u2013 " + info.title.replace(/\s+/g, " ").slice(0, 60) : "";
-    this.titleEl.setText(this.file.name + (info ? "  (" + (info.index + 1) + "/" + info.count + ")" : "") + suffix);
+    // The position lives in the toolbar counter now; repeating it in the title
+    // made the top bar long and told the reader the same thing twice.
+    this.titleEl.setText(this.file.name + suffix);
+    if (this.slideLabelEl) {
+      this.slideLabelEl.setText(info && info.count ? info.index + 1 + " / " + info.count : "");
+    }
   }
 
   // The page the reader is on, in the toolbar beside the zoom, so a long
@@ -542,6 +562,52 @@ class OfficeView extends FileView {
     raf(() => {
       if (!this.slideshow) this.applySettings();
     });
+  }
+
+  // One key handler for the pane and for the slideshow. A presentation steps a
+  // slide on the arrows the reader chose in settings; the rail keeps its own
+  // arrows once a thumbnail has focus, and a text field keeps its caret.
+  onViewKey(ev) {
+    if (this.slideshow) {
+      this.onSlideshowKey(ev);
+      return;
+    }
+    if (!this.controller || !this.format || this.format.kind !== "presentation") return;
+    if (ev.defaultPrevented) return;
+    const target = ev.target;
+    if (target && (target.tagName === "INPUT" || target.tagName === "TEXTAREA" || target.isContentEditable)) return;
+    if (target && target.closest && target.closest(".ov-pptx-rail")) return;
+    // A dialog owns the keyboard while it is open, even though the pane behind
+    // it is still the active view.
+    if (typeof document !== "undefined" && document.querySelector && document.querySelector(".modal-container")) return;
+    if (!this.isPaneActive(target)) return;
+    const mode = this.plugin.settings.slideArrowNav || "vertical";
+    if (mode === "off") return;
+    const vertical = mode === "vertical" || mode === "both";
+    const horizontal = mode === "horizontal" || mode === "both";
+    const forward = (vertical && ev.key === "ArrowDown") || (horizontal && ev.key === "ArrowRight");
+    const back = (vertical && ev.key === "ArrowUp") || (horizontal && ev.key === "ArrowLeft");
+    if (!forward && !back) return;
+    ev.preventDefault();
+    ev.stopPropagation();
+    if (forward) this.controller.nextSlide();
+    else this.controller.previousSlide();
+  }
+
+  // True when the key came from this pane: either the event target is inside
+  // it, or the workspace says this view is the active one. A click on the slide
+  // leaves the focus on the leaf, not on an element inside it.
+  isPaneActive(target) {
+    if (target && this.contentEl.contains && this.contentEl.contains(target)) return true;
+    try {
+      const workspace = this.app && this.app.workspace;
+      if (workspace && typeof workspace.getActiveViewOfType === "function") {
+        return workspace.getActiveViewOfType(OfficeView) === this;
+      }
+    } catch (err) {
+      // A host without the call: fall back to the target test above.
+    }
+    return false;
   }
 
   onSlideshowKey(ev) {
@@ -810,7 +876,12 @@ class OfficeView extends FileView {
         },
       });
     }
-    items.push({ title: "Select all text", icon: "text", action: () => this.selectAllText() });
+    const presentation = Boolean(this.format && this.format.kind === "presentation");
+    items.push({
+      title: presentation ? "Select all text in this slide" : "Select all text",
+      icon: "text",
+      action: () => this.selectAllText(),
+    });
     items.push({ title: "Show or hide the file details", icon: "info", action: () => this.toggleMeta() });
     items.push({ title: "Reload the file", icon: "refresh-cw", action: () => this.reload() });
     items.push({ title: "Open in the system editor", icon: "external-link", action: () => this.openInDefaultApp() });
@@ -838,8 +909,18 @@ class OfficeView extends FileView {
     }
   }
 
+  // Select all means this slide on a deck: the rail is a list of pictures and
+  // the notes belong to the file, not to the page in front of the reader.
+  selectionRoot() {
+    if (this.format && this.format.kind === "presentation" && this.hostEl) {
+      const slide = this.hostEl.querySelector(".ov-pptx-slide");
+      if (slide) return slide;
+    }
+    return this.hostEl;
+  }
+
   selectAllText() {
-    const host = this.hostEl;
+    const host = this.selectionRoot();
     if (!host) return;
     try {
       const range = document.createRange();

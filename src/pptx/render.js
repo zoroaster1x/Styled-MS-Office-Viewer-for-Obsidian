@@ -102,6 +102,10 @@ function createPptxRenderer(opts) {
     showNotes: true,
     slideIndex: 0,
     theme: "white",
+    // Navigation: a wheel or an arrow key steps one slide, with a short nudge
+    // so the move reads as a push rather than a cut.
+    scrollNav: true,
+    animate: true,
   }, opts.settings || {});
   const callbacks = {
     onSlideChange: opts.onSlideChange || function () {},
@@ -140,6 +144,10 @@ function createPptxRenderer(opts) {
     const stageWrap = body.createDiv("ov-pptx-stagewrap");
     stageEl = stageWrap.createDiv("ov-pptx-stage");
     notesEl = rootEl.createDiv("ov-pptx-notes");
+    // A wheel over the slide steps through the deck. The rail and the notes
+    // keep their own scrolling: they are outside this element.
+    stageWrap.addEventListener("wheel", onStageWheel, { passive: false });
+    railEl.addEventListener("keydown", onRailKey);
     watchStageSize();
     buildRail();
     showSlide(current);
@@ -149,7 +157,12 @@ function createPptxRenderer(opts) {
   function buildRail() {
     railEl.empty();
     model.slides.forEach((slide, index) => {
-      const button = railEl.createDiv("ov-pptx-thumb");
+      // A button, so the rail takes focus and its own arrow keys, and the tab
+      // order reaches it.
+      const button = railEl.createEl("button", {
+        cls: "ov-pptx-thumb",
+        attr: { type: "button", "aria-label": "Slide " + (index + 1) },
+      });
       button.dataset.index = String(index);
       const number = button.createDiv("ov-pptx-thumbnum");
       number.setText(String(index + 1));
@@ -198,7 +211,83 @@ function createPptxRenderer(opts) {
     }
   }
 
-  function showSlide(index) {
+  // A wheel over the stage steps a slide once it has travelled far enough. A
+  // trackpad sends many small deltas, a mouse one big one, so the total is
+  // accumulated and reset after a pause.
+  const WHEEL_STEP_PX = 30;
+  let wheelPending = 0;
+  let wheelReset = null;
+
+  function onStageWheel(ev) {
+    if (!settings.scrollNav || !stageEl) return;
+    // Ctrl and meta are the browser's pinch zoom; leave them alone.
+    if (ev.ctrlKey || ev.metaKey) return;
+    if (!ev.deltaY) return;
+    ev.preventDefault();
+    if (wheelReset) clearTimeout(wheelReset);
+    wheelReset = setTimeout(() => {
+      wheelPending = 0;
+      wheelReset = null;
+    }, 220);
+    wheelPending += ev.deltaY;
+    if (wheelPending >= WHEEL_STEP_PX) {
+      wheelPending = 0;
+      stepSlide(1);
+    } else if (wheelPending <= -WHEEL_STEP_PX) {
+      wheelPending = 0;
+      stepSlide(-1);
+    }
+  }
+
+  // The rail takes its own arrows: up and down walk the selection, Enter opens
+  // it. Without this the view's arrow handler would change the slide under the
+  // focused preview.
+  function onRailKey(ev) {
+    const active = ev.target && ev.target.closest ? ev.target.closest(".ov-pptx-thumb") : null;
+    if (!active) return;
+    const thumbs = Array.from(railEl.children);
+    const index = thumbs.indexOf(active);
+    if (index === -1) return;
+    if (ev.key === "Enter" || ev.key === " ") {
+      ev.preventDefault();
+      ev.stopPropagation();
+      showSlide(Number(active.dataset.index));
+      return;
+    }
+    let next = null;
+    if (ev.key === "ArrowDown" || ev.key === "ArrowRight") next = thumbs[index + 1];
+    else if (ev.key === "ArrowUp" || ev.key === "ArrowLeft") next = thumbs[index - 1];
+    else if (ev.key === "Home") next = thumbs[0];
+    else if (ev.key === "End") next = thumbs[thumbs.length - 1];
+    if (!next) return;
+    ev.preventDefault();
+    ev.stopPropagation();
+    next.focus();
+    if (next.scrollIntoView) next.scrollIntoView({ block: "nearest" });
+  }
+
+  // Nudge the current slide out of the way, then draw the next one. The nudge
+  // is short enough to read as a push and never delays a fast reader.
+  let stepTimer = null;
+
+  function stepSlide(direction, targetIndex) {
+    const target = targetIndex != null ? targetIndex : current + direction;
+    if (target < 0 || target >= model.slides.length) return;
+    const dir = target > current ? 1 : target < current ? -1 : 0;
+    const frame = stageEl && stageEl.querySelector(".ov-pptx-frame");
+    if (!settings.animate || !frame || !dir) {
+      showSlide(target, dir);
+      return;
+    }
+    if (stepTimer) clearTimeout(stepTimer);
+    frame.classList.add(dir > 0 ? "ov-pptx-nudge-up" : "ov-pptx-nudge-down");
+    stepTimer = setTimeout(() => {
+      stepTimer = null;
+      showSlide(target, dir);
+    }, 90);
+  }
+
+  function showSlide(index, direction) {
     current = clampSlide(index);
     if (!stageEl) return;
     stageEl.empty();
@@ -211,6 +300,12 @@ function createPptxRenderer(opts) {
     slideEl.addClass("ov-pptx-slide");
     const frame = stageEl.createDiv("ov-pptx-frame");
     frame.appendChild(slideEl);
+    if (direction) {
+      frame.classList.add(direction > 0 ? "ov-pptx-enter-next" : "ov-pptx-enter-prev");
+      setTimeout(() => {
+        frame.classList.remove("ov-pptx-enter-next", "ov-pptx-enter-prev");
+      }, 200);
+    }
     applyScale();
     updateRailSelection();
     renderNotes(slide);
@@ -1428,11 +1523,11 @@ function createPptxRenderer(opts) {
   // ---------- public API ----------
 
   function nextSlide() {
-    if (current < model.slides.length - 1) showSlide(current + 1);
+    if (current < model.slides.length - 1) stepSlide(1);
   }
 
   function previousSlide() {
-    if (current > 0) showSlide(current - 1);
+    if (current > 0) stepSlide(-1);
   }
 
   function goToSlide(index) {
@@ -1461,6 +1556,8 @@ function createPptxRenderer(opts) {
 
   function destroy() {
     destroyed = true;
+    if (stepTimer) clearTimeout(stepTimer);
+    if (wheelReset) clearTimeout(wheelReset);
     thumbnailObserver.disconnect();
     if (resizeObserver) {
       resizeObserver.disconnect();

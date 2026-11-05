@@ -43,6 +43,10 @@ const DEFAULT_SETTINGS = {
   slideZoom: 100,
   slideFit: "contain",
   showSpeakerNotes: true,
+  // A wheel over the slide steps the deck; arrow keys do too, on the axes the
+  // reader picks. The preview rail always keeps its own arrows.
+  slideScrollNav: true,
+  slideArrowNav: "vertical",
   // View
   statusInView: false,
   pinchZoom: true,
@@ -344,6 +348,28 @@ class OfficeViewerSettingTab extends PluginSettingTab {
         toggle
           .setValue(this.plugin.settings.showSpeakerNotes !== false)
           .onChange((value) => this.plugin.updateSetting("showSpeakerNotes", value))
+      );
+
+    new Setting(containerEl)
+      .setName("Scroll to change slides")
+      .setDesc("A wheel over the slide nudges it and moves to the next or previous one. The preview rail still scrolls on its own.")
+      .addToggle((toggle) =>
+        toggle
+          .setValue(this.plugin.settings.slideScrollNav !== false)
+          .onChange((value) => this.plugin.updateSetting("slideScrollNav", value))
+      );
+
+    new Setting(containerEl)
+      .setName("Arrow keys change slides")
+      .setDesc("Which arrows step through the deck. A focused preview in the rail always takes the arrows for the rail.")
+      .addDropdown((dropdown) =>
+        dropdown
+          .addOption("vertical", "Up and down (recommended)")
+          .addOption("horizontal", "Left and right")
+          .addOption("both", "Both")
+          .addOption("off", "Off")
+          .setValue(this.plugin.settings.slideArrowNav || "vertical")
+          .onChange((value) => this.plugin.updateSetting("slideArrowNav", value))
       );
 
     containerEl.createEl("h3", { text: "View" });

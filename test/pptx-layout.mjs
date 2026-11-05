@@ -33,10 +33,11 @@ const shape = (id, name, ph, box, inner) =>
 const parts = {
   "_rels/.rels": "<Relationships xmlns=\"" + REL + "\"><Relationship Id=\"rId1\" Type=\"" + RT + "/officeDocument\" Target=\"ppt/presentation.xml\"/></Relationships>",
   "ppt/presentation.xml":
-    "<p:presentation xmlns:p=\"" + P + "\" xmlns:r=\"" + R + "\"><p:sldIdLst><p:sldId id=\"256\" r:id=\"rId1\"/></p:sldIdLst>" +
+    "<p:presentation xmlns:p=\"" + P + "\" xmlns:r=\"" + R + "\"><p:sldIdLst><p:sldId id=\"256\" r:id=\"rId1\"/><p:sldId id=\"257\" r:id=\"rId2\"/></p:sldIdLst>" +
     "<p:sldSz cx=\"9144000\" cy=\"6858000\"/><p:notesSz cx=\"6858000\" cy=\"9144000\"/></p:presentation>",
   "ppt/_rels/presentation.xml.rels":
-    "<Relationships xmlns=\"" + REL + "\"><Relationship Id=\"rId1\" Type=\"" + RT + "/slide\" Target=\"slides/slide1.xml\"/></Relationships>",
+    "<Relationships xmlns=\"" + REL + "\"><Relationship Id=\"rId1\" Type=\"" + RT + "/slide\" Target=\"slides/slide1.xml\"/>" +
+    "<Relationship Id=\"rId2\" Type=\"" + RT + "/slide\" Target=\"slides/slide2.xml\"/></Relationships>",
   "ppt/slideMasters/slideMaster1.xml":
     "<p:sldMaster xmlns:p=\"" + P + "\" xmlns:a=\"" + A + "\" xmlns:r=\"" + R + "\"><p:cSld><p:spTree>" +
     "<p:nvGrpSpPr><p:cNvPr id=\"1\" name=\"\"/><p:cNvGrpSpPr/><p:nvPr/></p:nvGrpSpPr><p:grpSpPr/>" +
@@ -92,6 +93,13 @@ const parts = {
     "<a:solidFill><a:srgbClr val=\"123456\"/></a:solidFill></p:spPr>" +
     "<p:txBody><a:bodyPr/><a:lstStyle/><a:p/></p:txBody></p:sp></p:grpSp>" +
     "</p:spTree></p:cSld></p:sld>",
+  "ppt/slides/slide2.xml":
+    "<p:sld xmlns:p=\"" + P + "\" xmlns:a=\"" + A + "\" xmlns:r=\"" + R + "\"><p:cSld><p:spTree>" +
+    "<p:nvGrpSpPr><p:cNvPr id=\"1\" name=\"\"/><p:cNvGrpSpPr/><p:nvPr/></p:nvGrpSpPr><p:grpSpPr/>" +
+    shape(2, "Title 1", "<p:ph type=\"title\"/>", [0, 0, 9144000, 1000000], textBody("<a:p><a:r><a:rPr lang=\"en-US\"/><a:t>Second slide</a:t></a:r></a:p>")) +
+    "</p:spTree></p:cSld></p:sld>",
+  "ppt/slides/_rels/slide2.xml.rels":
+    "<Relationships xmlns=\"" + REL + "\"><Relationship Id=\"rId1\" Type=\"" + RT + "/slideLayout\" Target=\"../slideLayouts/slideLayout1.xml\"/></Relationships>",
   "ppt/slides/_rels/slide1.xml.rels":
     "<Relationships xmlns=\"" + REL + "\"><Relationship Id=\"rId1\" Type=\"" + RT + "/slideLayout\" Target=\"../slideLayouts/slideLayout1.xml\"/></Relationships>",
 };
@@ -177,6 +185,26 @@ if (scaledChild) {
 check("layout date placeholder stays off the slide", (host.textContent || "").indexOf("1/2/03") === -1);
 const slideNumber = byText("1");
 check("slide number placeholder resolves", Boolean(slideNumber) && slideNumber.textContent.trim() === "1", slideNumber && JSON.stringify(slideNumber.textContent));
+
+// Navigation: a wheel over the stage steps the deck, and the rail is a list
+// of buttons so its previews take focus instead of text selection.
+const thumbs = Array.from(host.querySelectorAll(".ov-pptx-thumb"));
+check("the rail is a list of buttons", thumbs.length === 2 && thumbs.every((el) => el.tagName === "BUTTON"), thumbs.map((el) => el.tagName).join(","));
+check("each preview names its slide", thumbs[1] && thumbs[1].getAttribute("aria-label") === "Slide 2", thumbs[1] && thumbs[1].getAttribute("aria-label"));
+const stageWrap = host.querySelector(".ov-pptx-stagewrap");
+const wheelEvent = (dy) => {
+  const ev = new window.Event("wheel", { bubbles: true, cancelable: true });
+  ev.deltaY = dy;
+  return ev;
+};
+const wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+const start = renderer.getState().index;
+stageWrap.dispatchEvent(wheelEvent(120));
+await wait(220);
+check("a wheel down steps to the next slide", renderer.getState().index === start + 1, String(renderer.getState().index));
+stageWrap.dispatchEvent(wheelEvent(-120));
+await wait(220);
+check("a wheel up steps back", renderer.getState().index === start, String(renderer.getState().index));
 
 console.log("");
 console.log("pptx-layout:", pass, "pass,", fail, "fail");

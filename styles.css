@@ -34,8 +34,21 @@
 .ov-tools {
   display: flex;
   align-items: center;
-  gap: 4px;
+  gap: 10px;
   flex-wrap: wrap;
+}
+
+/* Finder, zoom, this format's navigation, and the shared buttons. The wider
+   gap between groups is the only separator, so a busy toolbar still reads as
+   four controls rather than a row of icons. */
+.ov-tool-group {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+}
+
+.ov-tool-group:empty {
+  display: none;
 }
 
 .ov-tool-btn {
@@ -98,11 +111,15 @@
   text-align: center;
 }
 
-.ov-page-label {
+.ov-page-label,
+.ov-slide-label {
   font-size: 0.8em;
   color: var(--text-muted);
   white-space: nowrap;
-  margin-right: 4px;
+  margin: 0 4px;
+  min-width: 46px;
+  text-align: center;
+  font-variant-numeric: tabular-nums;
 }
 
 .ov-tabs {
@@ -972,6 +989,28 @@
   border-radius: 5px;
   cursor: pointer;
   margin-bottom: 4px;
+  /* A button reset: the rail is a list of buttons now, so the arrows and Tab
+     reach it, and the host's default button paint must not show through. */
+  width: 100%;
+  background: transparent;
+  border: none;
+  box-shadow: none;
+  font: inherit;
+  color: inherit;
+  text-align: inherit;
+}
+
+.ov-pptx-thumb:focus-visible {
+  outline: 2px solid var(--interactive-accent);
+  outline-offset: 1px;
+}
+
+/* A preview is a picture of a slide: nothing inside it is text to select or a
+   target to drag over. The click belongs to the button that holds it. */
+.ov-pptx-thumbbox,
+.ov-pptx-thumbbox * {
+  user-select: none;
+  pointer-events: none;
 }
 
 .ov-pptx-thumb:hover {
@@ -1023,6 +1062,37 @@
 
 .ov-pptx-frame {
   position: relative;
+  transition: transform 90ms ease-out, opacity 90ms ease-out;
+}
+
+/* A wheel or an arrow key nudges the current slide out, then the next one
+   settles in from the other side. Short enough to read as a push. */
+.ov-pptx-nudge-up {
+  transform: translateY(-12px);
+  opacity: 0.55;
+}
+
+.ov-pptx-nudge-down {
+  transform: translateY(12px);
+  opacity: 0.55;
+}
+
+.ov-pptx-frame.ov-pptx-enter-next {
+  animation: ov-pptx-enter-next 150ms ease-out;
+}
+
+.ov-pptx-frame.ov-pptx-enter-prev {
+  animation: ov-pptx-enter-prev 150ms ease-out;
+}
+
+@keyframes ov-pptx-enter-next {
+  from { opacity: 0.45; transform: translateY(16px); }
+  to { opacity: 1; transform: none; }
+}
+
+@keyframes ov-pptx-enter-prev {
+  from { opacity: 0.45; transform: translateY(-16px); }
+  to { opacity: 1; transform: none; }
 }
 
 .ov-pptx-slide {

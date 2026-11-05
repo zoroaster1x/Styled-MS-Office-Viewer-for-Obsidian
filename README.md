@@ -101,7 +101,7 @@ A toolbar sits above every file. It carries search, zoom, and the actions that f
 
 **Documents.** The body is split into pages with a quiet page number in the bottom margin when the document has no footer of its own. Text and images are selectable and copyable. The outline panel lists the headings. The toolbar shows the page you are on beside the zoom, updated as you scroll, and changing the zoom keeps the same page in view. Pages render as they come into view, so a hundred page manual opens like a ten page one; search, the word counts and the outline still cover the whole document.
 
-**Presentations.** A slideshow button (and the **Start or stop the slideshow** command) fills the pane with the slide, takes the arrow keys, space, Home and End, and leaves on Escape. Slides carry their final state: the renderer draws every shape and never plays the animation tree, so nothing is hidden behind an effect. The file's own transitions and animations are reported in the details panel instead of being played. A deck that embeds its fonts renders them, so it keeps its typography on a machine that never had the face installed.
+**Presentations.** A slideshow button (and the **Start or stop the slideshow** command) fills the pane with the slide, takes the arrow keys, space, Home and End, and leaves on Escape. In the pane, a wheel over the slide nudges it and steps to the next or previous slide, and the arrow keys can step too; both are settings. The preview rail is a column of buttons: Tab reaches it, its own arrows move the selection, and Enter opens the slide. Its previews are pictures of slides, so nothing inside one can be text-selected. Slides carry their final state: the renderer draws every shape and never plays the animation tree, so nothing is hidden behind an effect. The file's own transitions and animations are reported in the details panel instead of being played. A deck that embeds its fonts renders them, so it keeps its typography on a machine that never had the face installed.
 
 **File details.** The info button opens a panel with name, path, size and date, then everything the file says about itself: author, application, revision, timestamps, slide and sheet counts, words, characters and pages, languages, media and more. A file or deck can also carry its own context menu for copying the selection, searching, selecting all text, file details, reload, and opening in the system editor.
 
@@ -124,6 +124,8 @@ A toolbar sits above every file. It carries search, zoom, and the actions that f
 | | Windowed page rendering | Draw only the pages near the viewport; pages appear as you scroll |
 | Presentations | Slide zoom and fit | Fit the whole slide, or keep its saved size |
 | | Show speaker notes | Show the notes pane under the slide |
+| | Scroll to change slides | A wheel over the slide nudges it and moves to the next or previous one; the preview rail keeps its own scrolling |
+| | Arrow keys change slides | Up and down, left and right, both, or off. A focused preview in the rail always takes the arrows for the rail |
 | View | Show the counts inside the view | Move the word, character and page counts to the bottom left of the view instead of the app's status bar |
 | | Pinch to zoom | A touchpad pinch over the view steps the zoom |
 | | Invert pinch zoom | Swap the pinch direction |

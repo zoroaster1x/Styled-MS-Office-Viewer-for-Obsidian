@@ -179,8 +179,31 @@ for (const diskPath of files) {
           const expected = Math.max(0.05, Math.min((1000 - 24) / slideWidth, (600 - 24) / slideHeight));
           resized = Math.abs(parseFloat(frame.style.width) - slideWidth * expected) < 1;
         }
-        const good = entered && escaped && left && resized && moves.next === 2 && moves.previous === 1 && moves.first === 1;
-        console.log(good ? "ok  " : "FAIL", "slideshow mode                 next " + moves.next + ", previous " + moves.previous + ", home " + moves.first + ", input ignored " + (moves.next === 2) + ", fullscreen exit " + escaped + ", refit " + resized);
+        // Arrows in the pane step the deck on the configured axis, and a key
+        // pressed inside the preview rail keeps the rail's own navigation.
+        const paneKey = (k, target) => view.onViewKey({ key: k, target, preventDefault() {}, stopPropagation() {} });
+        const inStage = view.contentEl.querySelector(".ov-pptx-slide") || view.contentEl;
+        const inRail = view.contentEl.querySelector(".ov-pptx-thumb") || inStage;
+        const beforePane = { next: moves.next, previous: moves.previous };
+        plugin.settings.slideArrowNav = "vertical";
+        paneKey("ArrowDown", inStage);
+        paneKey("ArrowUp", inStage);
+        paneKey("ArrowRight", inStage);
+        plugin.settings.slideArrowNav = "both";
+        paneKey("ArrowRight", inStage);
+        paneKey("ArrowDown", inRail);
+        plugin.settings.slideArrowNav = "vertical";
+        const paneOk = moves.next === beforePane.next + 2 && moves.previous === beforePane.previous + 1;
+        // Select all in a deck stops at the slide: the rail and the notes are
+        // not text on the page.
+        // linkedom has no Selection, so the scope is checked where it is
+        // decided: a deck selects the slide element, a document the host.
+        const selectionRoot = view.selectionRoot ? view.selectionRoot() : null;
+        const selectOk = Boolean(selectionRoot && selectionRoot.classList && selectionRoot.classList.contains("ov-pptx-slide"));
+        const labelOk = Boolean(view.slideLabelEl && /^1 \/ \d+$/.test(view.slideLabelEl.textContent || ""));
+        const showOk = moves.first === 1 && moves.next - 2 === 2 && moves.previous - 1 === 1;
+        const good = entered && escaped && left && resized && showOk && paneOk && selectOk && labelOk;
+        console.log(good ? "ok  " : "FAIL", "slideshow mode                 next " + moves.next + ", previous " + moves.previous + ", home " + moves.first + ", input ignored " + (moves.next - 2 === 2) + ", fullscreen exit " + escaped + ", refit " + resized + ", pane arrows " + paneOk + ", select all scoped " + selectOk + ", slide counter " + labelOk);
         if (good) pass++;
         else fail++;
         controller.nextSlide = original.next;

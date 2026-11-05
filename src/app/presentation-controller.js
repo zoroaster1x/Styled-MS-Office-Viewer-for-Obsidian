@@ -68,6 +68,8 @@ class PresentationController {
       zoom: this.currentZoom() / 100,
       fit: this.plugin.settings.slideFit || "contain",
       showNotes: this.plugin.settings.showSpeakerNotes !== false,
+      scrollNav: this.plugin.settings.slideScrollNav !== false,
+      animate: true,
       // Reopen on the slide the reader left off on.
       slideIndex: this.slideIndex,
     };
