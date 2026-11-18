@@ -33,6 +33,7 @@ Synthetic, they need nothing configured:
 |---|---|
 | `test/smoke.mjs` | the built bundle loads, registers the view, the extensions, the commands and the settings tab, and paints its empty state |
 | `test/filters.mjs` | autofilter semantics (values, blanks, custom operators, AND across columns) and that no border of a hidden row is drawn |
+| `test/merges.mjs` | a whole-column or whole-row merge does not grow the used range |
 | `test/copy.mjs` | block selection, both clipboard flavours, quoted TSV, hidden rows skipped |
 | `test/virtual.mjs` | windowed row rendering, scroll position after a rebuild, frozen band, selection tint, search outside the window |
 | `test/sizing.mjs` | column and row drag, auto fit, remembered sizes, the minimum settings |

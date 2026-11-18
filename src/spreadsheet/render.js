@@ -358,9 +358,16 @@ function createRenderer(opts) {
 
     const coverMap = new Map();
     for (const merge of sheet.merges) {
-      for (let r = merge.r1; r <= Math.min(merge.r2, maxRow); r++) {
-        for (let c = merge.c1; c <= Math.min(merge.c2, maxCol); c++) {
-          coverMap.set(key(r, c), merge);
+      // A whole-column merge (D1:D1048576) is formatting, not content. Clamp it
+      // to the used range here, once, so every later walk (cell spans, border
+      // edges) is bounded by the sheet instead of Excel's row or column limit.
+      const r2 = Math.min(merge.r2, maxRow);
+      const c2 = Math.min(merge.c2, maxCol);
+      if (r2 < merge.r1 || c2 < merge.c1) continue;
+      const clamped = r2 === merge.r2 && c2 === merge.c2 ? merge : { ...merge, r2, c2 };
+      for (let r = merge.r1; r <= r2; r++) {
+        for (let c = merge.c1; c <= c2; c++) {
+          coverMap.set(key(r, c), clamped);
         }
       }
     }
@@ -435,7 +442,9 @@ function createRenderer(opts) {
   function G_maxColHint() {
     const dims = sheet.dims;
     let max = dims.c2 || 1;
-    for (const merge of sheet.merges) if (merge.c2 > max) max = merge.c2;
+    // Column definitions can state a width for a whole range; merges cannot.
+    // A whole-row merge (A1:XFD1) would otherwise pull this to the sheet limit.
+    for (const def of sheet.cols) if (def.max > max) max = def.max;
     return max;
   }
 
