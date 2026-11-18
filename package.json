@@ -6,6 +6,7 @@
   "scripts": {
     "dev": "bun esbuild.config.mjs",
     "build": "bun esbuild.config.mjs production",
+    "build:viewer": "bun src/standalone/build.mjs",
     "test": "bun test/smoke.mjs && bun test/filters.mjs && bun test/copy.mjs && bun test/privacy.mjs && bun test/merges.mjs",
     "test:files": "bun test/fidelity.mjs && bun test/stress.mjs --render && bun test/speed.mjs && bun test/vault.mjs",
     "test:reference": "python3 test/compare-reference.py",
